@@ -8,7 +8,7 @@ const fs = require('fs');
 // ============================================================
 // 1. 内存数据库 + mock wx-server-sdk
 // ============================================================
-const store = { users: [], reports: [], bills: [], subscriptions: [] };
+const store = { users: [], reports: [], bills: [], subscriptions: [], schedules: [] };
 let autoId = 0;
 const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
@@ -51,6 +51,11 @@ function match(doc, query) {
     const cond = query[key];
     if (cond && cond.__in) return cond.__in.indexOf(doc[key]) >= 0;
     if (cond && cond.__regex) return new RegExp(cond.__regex).test(String(doc[key]));
+    if (cond && cond.__range) {
+      if (cond.__range.gte !== undefined && doc[key] < cond.__range.gte) return false;
+      if (cond.__range.lte !== undefined && doc[key] > cond.__range.lte) return false;
+      return true;
+    }
     return deepEqual(doc[key], cond);
   });
 }
@@ -112,9 +117,12 @@ function makeCollection(name) {
         const base = origWhere2(query);
         const res = await base.get();
         let data = res.data.slice();
-        sorts.forEach(({ field, dir }) => {
-          data.sort((x, y) =>
-            dir === 'desc' ? String(y[field]).localeCompare(String(x[field])) : String(x[field]).localeCompare(String(y[field])));
+        data.sort((x, y) => {
+          for (const { field, dir } of sorts) {
+            const compared = String(x[field]).localeCompare(String(y[field]));
+            if (compared !== 0) return dir === 'desc' ? -compared : compared;
+          }
+          return 0;
         });
         return { data: data.slice(0, limited) };
       }
@@ -143,6 +151,13 @@ const mockCloud = {
       serverDate() { return new Date('2026-08-19T10:00:00+08:00'); },
       command: {
         in(arr) { return { __in: arr }; },
+        gte(value) {
+          return {
+            __range: { gte: value },
+            and(other) { return { __range: Object.assign({}, this.__range, other.__range) }; }
+          };
+        },
+        lte(value) { return { __range: { lte: value } }; },
         inc(n) { return { __inc: n }; }
       },
       RegExp({ regexp }) { return { __regex: regexp }; }
@@ -233,6 +248,7 @@ function assert(cond, msg) {
   const A = 'openid-AAA', B = 'openid-BBB', C = 'openid-CCC';
   const D = 'openid-DDD', E = 'openid-EEE', F = 'openid-FFF';
   const G = 'openid-GGG', H = 'openid-HHH';
+  const I = 'openid-III', J = 'openid-JJJ';
 
   // ---------- 登录 ----------
   console.log('\n== 登录 ==');
@@ -249,6 +265,8 @@ function assert(cond, msg) {
   const loginF = await callAs(F, 'login');
   const loginG = await callAs(G, 'login');
   const loginH = await callAs(H, 'login');
+  const loginI = await callAs(I, 'login');
+  const loginJ = await callAs(J, 'login');
 
   // ---------- 绑定 ----------
   console.log('\n== 绑定 ==');
@@ -285,6 +303,8 @@ function assert(cond, msg) {
   assert(usersA.partnerId === usersB._id && usersB.partnerId === usersA._id, '双向绑定：双方 partnerId 互指');
   const rebind = await callAs(A, 'bind', { code: 'XYZ234' });
   assert(!rebind.success, '已绑定再绑定：被拒绝');
+  const bindIJ = await callAs(I, 'bind', { code: loginJ.userInfo.bindCode });
+  assert(bindIJ.success, 'I 与 J 建立独立绑定关系，用于日程越权测试');
 
   // ---------- 通知安全边界 ----------
   console.log('\n== 通知安全边界 ==');
@@ -410,6 +430,163 @@ function assert(cond, msg) {
   const approveOk = await callAs(A, 'approveReport', { reportId: r2.id, action: 'approve' });
   const report2 = store.reports.find((x) => x._id === r2.id);
   assert(approveOk.success && report2.status === 'approved', 'B 发报备、A 批准：反向流程成功');
+
+  // ---------- 情侣日程 V1 ----------
+  console.log('\n== 情侣日程 V1 ==');
+  const scheduleUserA = () => store.users.find((user) => user.openid === A);
+  const scheduleUserB = () => store.users.find((user) => user.openid === B);
+  const scheduleUserI = () => store.users.find((user) => user.openid === I);
+
+  const unboundSchedules = await callAs(C, 'getSchedules', { year: 2026, month: 8 });
+  assert(!unboundSchedules.success && unboundSchedules.code === 'NOT_BOUND', '日程：未绑定用户无法查询');
+  const unboundScheduleCalls = await Promise.all([
+    callAs(C, 'getScheduleDetail', { id: 'unknown' }),
+    callAs(C, 'saveSchedule', { type: 'schedule', title: '测试', date: '2026-08-24' }),
+    callAs(C, 'toggleSchedule', { id: 'unknown', completed: true }),
+    callAs(C, 'deleteSchedule', { id: 'unknown' })
+  ]);
+  assert(unboundScheduleCalls.every((result) => !result.success && result.code === 'NOT_BOUND'),
+    '日程：未绑定用户调用全部日程接口均统一返回 NOT_BOUND');
+
+  const invalidType = await callAs(A, 'saveSchedule', { type: 'event', title: '非法类型', date: '2026-08-24' });
+  const emptyTitle = await callAs(A, 'saveSchedule', { type: 'schedule', title: '   ', date: '2026-08-24' });
+  const invalidDate = await callAs(A, 'saveSchedule', { type: 'schedule', title: '非法日期', date: '2026-13-01' });
+  const impossibleDate = await callAs(A, 'saveSchedule', { type: 'schedule', title: '不存在日期', date: '2026-02-30' });
+  const invalidTime = await callAs(A, 'saveSchedule', { type: 'schedule', title: '非法时间', date: '2026-08-24', startTime: '24:00' });
+  const invalidRange = await callAs(A, 'saveSchedule', { type: 'schedule', title: '时间倒置', date: '2026-08-24', startTime: '12:00', endTime: '11:59' });
+  assert(!invalidType.success && invalidType.code === 'INVALID_TYPE', '日程：非法 type 被拒绝');
+  assert(!emptyTitle.success && emptyTitle.code === 'INVALID_TITLE', '日程：空 title 被拒绝');
+  assert(!invalidDate.success && invalidDate.code === 'INVALID_DATE', '日程：非法月份日期被拒绝');
+  assert(!impossibleDate.success && impossibleDate.code === 'INVALID_DATE', '日程：2026-02-30 被严格拒绝');
+  assert(!invalidTime.success && invalidTime.code === 'INVALID_TIME', '日程：非法时间被拒绝');
+  assert(!invalidRange.success && invalidRange.code === 'INVALID_TIME_RANGE', '日程：endTime 早于 startTime 被拒绝');
+
+  const scheduleCreated = await callAs(A, 'saveSchedule', {
+    type: 'schedule', title: '一起吃晚饭', date: '2026-08-24', startTime: '19:00', endTime: '20:00', note: '餐厅见',
+    creatorId: scheduleUserI()._id, partnerId: scheduleUserI().partnerId, openid: I, completed: true
+  });
+  const todoCreated = await callAs(B, 'saveSchedule', {
+    type: 'todo', title: '买猫粮', date: '2026-08-24', startTime: '09:00', note: ''
+  });
+  const checkinCreated = await callAs(B, 'saveSchedule', {
+    type: 'checkin', title: '今日运动', date: '2026-08-25', startTime: '', endTime: '', note: ''
+  });
+  const septemberCreated = await callAs(A, 'saveSchedule', {
+    type: 'schedule', title: '九月事项', date: '2026-09-01', startTime: '08:00'
+  });
+  assert(scheduleCreated.success && scheduleCreated.schedule.type === 'schedule' && !scheduleCreated.schedule.completed,
+    '日程：正常新建 schedule，完成状态固定为 false');
+  assert(todoCreated.success && todoCreated.schedule.type === 'todo' && !todoCreated.schedule.completed, '日程：正常新建 todo');
+  assert(checkinCreated.success && checkinCreated.schedule.type === 'checkin' && !checkinCreated.schedule.completed, '日程：正常新建 checkin');
+  assert(scheduleCreated.schedule.creatorId === scheduleUserA()._id && scheduleCreated.schedule.creatorName === scheduleUserA().nickName &&
+    !Object.prototype.hasOwnProperty.call(scheduleCreated.schedule, 'openid') && !Object.prototype.hasOwnProperty.call(scheduleCreated.schedule, 'partnerId'),
+    '日程：客户端伪造 creatorId/partnerId/openid 无效且不落库');
+
+  const foreignSchedule = {
+    _id: nextId(), creatorId: scheduleUserI()._id, creatorName: 'I', type: 'todo', title: '另一对的事项',
+    date: '2026-08-24', startTime: '10:00', endTime: '', note: '', completed: false,
+    completedBy: '', completedByName: '', completedAt: null, createdAt: new Date('2026-08-20T00:00:00Z'),
+    updatedAt: new Date('2026-08-20T00:00:00Z'), updatedBy: scheduleUserI()._id
+  };
+  store.schedules.push(foreignSchedule);
+
+  const augustSchedules = await callAs(A, 'getSchedules', { year: 2026, month: 8, userId: scheduleUserI()._id, partnerId: scheduleUserI().partnerId });
+  assert(augustSchedules.success && augustSchedules.list.some((item) => item._id === scheduleCreated.id) &&
+    augustSchedules.list.some((item) => item._id === todoCreated.id) && augustSchedules.list.some((item) => item._id === checkinCreated.id),
+    '日程：正常查询当前双方日程');
+  assert(!augustSchedules.list.some((item) => item._id === foreignSchedule._id), '日程：伪造 userId/partnerId 也无法查询第三方日程');
+  assert(!augustSchedules.list.some((item) => item._id === septemberCreated.id), '日程：月查询只返回当月事项');
+  const sortedKeys = augustSchedules.list.map((item) => `${item.date}|${item.startTime}|${item.createdAt.toISOString()}`);
+  assert(deepEqual(sortedKeys, sortedKeys.slice().sort()), '日程：月查询按 date/startTime/createdAt 升序');
+
+  const ownDetail = await callAs(B, 'getScheduleDetail', { id: scheduleCreated.id });
+  const foreignDetail = await callAs(A, 'getScheduleDetail', { id: foreignSchedule._id });
+  assert(ownDetail.success && ownDetail.schedule._id === scheduleCreated.id, '日程详情：伴侣可查看对方创建的事项');
+  assert(!foreignDetail.success && foreignDetail.code === 'NOT_FOUND', '日程详情：第三方事项统一按不存在或无权访问处理');
+
+  const editedByPartner = await callAs(A, 'saveSchedule', {
+    id: todoCreated.id, type: 'todo', title: '买猫粮和猫砂', date: '2026-08-24', startTime: '09:00',
+    creatorId: scheduleUserA()._id, completed: true
+  });
+  const todoAfterEdit = store.schedules.find((item) => item._id === todoCreated.id);
+  assert(editedByPartner.success && todoAfterEdit.title === '买猫粮和猫砂' && todoAfterEdit.updatedBy === scheduleUserA()._id,
+    '日程编辑：双方都可以编辑');
+  assert(todoAfterEdit.creatorId === scheduleUserB()._id && !todoAfterEdit.completed,
+    '日程编辑：不能篡改 creatorId，也不能直接篡改 completed');
+  const foreignEdit = await callAs(I, 'saveSchedule', {
+    id: scheduleCreated.id, type: 'schedule', title: '越权编辑', date: '2026-08-24'
+  });
+  assert(!foreignEdit.success && foreignEdit.code === 'NOT_FOUND', '日程编辑：另一对绑定用户不能编辑');
+
+  const scheduleToggle = await callAs(B, 'toggleSchedule', { id: scheduleCreated.id, completed: true });
+  assert(!scheduleToggle.success && scheduleToggle.code === 'TYPE_NOT_TOGGLEABLE', '日程状态：schedule 不能 toggle');
+  const todoComplete = await callAs(A, 'toggleSchedule', { id: todoCreated.id, completed: true, completedBy: scheduleUserI()._id });
+  assert(todoComplete.success && todoComplete.schedule.completed && todoComplete.schedule.completedBy === scheduleUserA()._id,
+    '日程状态：todo 正常完成，完成者由服务端确定');
+  const checkinComplete = await callAs(A, 'toggleSchedule', { id: checkinCreated.id, completed: true });
+  assert(checkinComplete.success && checkinComplete.schedule.completedBy === scheduleUserA()._id && checkinComplete.schedule.completedAt,
+    '日程状态：checkin 正常完成并记录完成者和时间');
+  const todoCancel = await callAs(B, 'toggleSchedule', { id: todoCreated.id, completed: false });
+  assert(todoCancel.success && !todoCancel.schedule.completed && todoCancel.schedule.completedBy === '' &&
+    todoCancel.schedule.completedByName === '' && todoCancel.schedule.completedAt === null,
+    '日程状态：取消完成清空全部完成信息');
+
+  const convertedToSchedule = await callAs(B, 'saveSchedule', {
+    id: checkinCreated.id, type: 'schedule', title: '改为普通日程', date: '2026-08-25', startTime: '', endTime: '', note: ''
+  });
+  assert(convertedToSchedule.success && !convertedToSchedule.schedule.completed && convertedToSchedule.schedule.completedBy === '' &&
+    convertedToSchedule.schedule.completedAt === null, '日程编辑：todo/checkin 改为 schedule 时重置完成信息');
+
+  const deleteOwnTarget = await callAs(A, 'saveSchedule', { type: 'todo', title: 'A 删除自己的', date: '2026-08-26' });
+  const deletePartnerTarget = await callAs(A, 'saveSchedule', { type: 'todo', title: '由 B 删除', date: '2026-08-26' });
+  const foreignDelete = await callAs(I, 'deleteSchedule', { id: deletePartnerTarget.id });
+  const ownDelete = await callAs(A, 'deleteSchedule', { id: deleteOwnTarget.id });
+  const partnerDelete = await callAs(B, 'deleteSchedule', { id: deletePartnerTarget.id });
+  assert(!foreignDelete.success && foreignDelete.code === 'NOT_FOUND', '日程删除：另一对绑定用户不能删除');
+  assert(ownDelete.success && !store.schedules.some((item) => item._id === deleteOwnTarget.id), '日程删除：创建人可以删除');
+  assert(partnerDelete.success && !store.schedules.some((item) => item._id === deletePartnerTarget.id), '日程删除：伴侣也可以删除');
+
+  // ---------- 日程页面结构与前端接入 ----------
+  console.log('\n== 日程页面结构与前端接入 ==');
+  const appConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app.json'), 'utf8'));
+  const schedulePagePath = 'pages/schedule/schedule';
+  const scheduleEditPath = 'pages/schedule-edit/schedule-edit';
+  const scheduleJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule', 'schedule.js'), 'utf8');
+  const scheduleWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule', 'schedule.wxml'), 'utf8');
+  const scheduleWxss = fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule', 'schedule.wxss'), 'utf8');
+  const scheduleJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule', 'schedule.json'), 'utf8'));
+  const editJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule-edit', 'schedule-edit.js'), 'utf8');
+  const editWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule-edit', 'schedule-edit.wxml'), 'utf8');
+  const editJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'pages', 'schedule-edit', 'schedule-edit.json'), 'utf8'));
+  const calendarUtil = require(path.join(__dirname, '..', 'utils', 'calendar.js'));
+
+  assert(appConfig.pages.includes(schedulePagePath) && appConfig.pages.includes(scheduleEditPath), '日程页面：主页和编辑页已在 app.json 注册');
+  assert(!appConfig.tabBar.list.some((item) => item.pagePath === schedulePagePath || item.pagePath === scheduleEditPath),
+    '日程页面：本轮暂未加入 TabBar');
+  const calendarCells = calendarUtil.buildMonth(2026, 8, { today: '2026-08-24', selectedDate: '2026-08-24', markedDates: { '2026-08-24': true } });
+  assert(calendarCells.length === 42 && calendarCells.filter((item) => item.currentMonth).length === 31,
+    '月历工具：固定生成 6×7 共 42 格并正确包含当月天数');
+  assert(scheduleWxml.includes('bindtap="onPreviousMonth"') && scheduleWxml.includes('bindtap="onNextMonth"'),
+    '日程主页：存在上月和下月切换入口');
+  assert(scheduleJs.includes("name: 'getSchedules'") && scheduleJs.includes('data: { year, month }'), '日程主页：已接入按月 getSchedules');
+  assert(scheduleJs.includes('selectedList: this._dateMap[date] || []') && (scheduleJs.match(/name: 'getSchedules'/g) || []).length === 1,
+    '日程主页：当前月点击日期从 dateMap 筛选，不重复请求 getSchedules');
+  assert(/\.create-fab\s*\{[^}]*position:\s*fixed;/s.test(scheduleWxss) && scheduleWxss.includes('safe-area-inset-bottom'),
+    '日程主页：新建按钮 fixed 定位并兼顾安全区');
+  assert(scheduleJs.includes('schedule-edit/schedule-edit?date=${this.data.selectedDate}'), '日程主页：新建时传入当前选中日期');
+  assert(editJs.includes("name: 'saveSchedule'") && editJs.includes("name: 'getScheduleDetail'") &&
+    scheduleJs.includes("name: 'toggleSchedule'") && editJs.includes("name: 'deleteSchedule'"),
+    '日程页面：5 个后端接口均完成前端接入');
+  assert(scheduleWxml.includes("item.type !== 'schedule'") && scheduleWxml.includes('catchtap="onToggle"'),
+    '日程主页：schedule 无完成入口，todo/checkin 提供完成入口');
+  assert(editJs.includes('wx.showModal') && editJs.includes('modalResult.confirm'), '日程编辑：删除前有二次确认');
+  assert(scheduleJs.includes("result.code === 'NOT_BOUND'") && scheduleWxml.includes('请先绑定') === false &&
+    scheduleWxml.includes('bindtap="onGoBind"'), '日程主页：NOT_BOUND 使用明确动态文案并提供去绑定入口');
+  assert(!scheduleJs.includes('wx.cloud.database') && !editJs.includes('wx.cloud.database'), '日程页面：不直接访问云数据库');
+  assert(!scheduleJs.includes('getOpenid') && !editJs.includes('getOpenid') && !editJs.includes('creatorId:'),
+    '日程页面：不使用客户端 OPENID/creatorId 参与权限或保存');
+  assert(!scheduleJson.usingComponents && !editJson.usingComponents && !/vant|weui|miniprogram_npm/.test(scheduleJs + editJs + scheduleWxml + editWxml),
+    '日程页面：未引入第三方 UI 框架');
 
   // ---------- Banner 原子同步与受控访问 ----------
   console.log('\n== Banner 原子同步与受控访问 ==');

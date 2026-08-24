@@ -8,7 +8,9 @@
     "pages/detail/detail",
     "pages/bill/bill",
     "pages/bill-edit/bill-edit",
-    "pages/apply/apply"
+    "pages/apply/apply",
+    "pages/schedule/schedule",
+    "pages/schedule-edit/schedule-edit"
   ],
   "window": {
     "backgroundTextStyle": "light",

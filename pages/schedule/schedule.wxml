@@ -1,0 +1,66 @@
+<view class="schedule-page">
+  <view class="calendar-card">
+    <view class="month-header">
+      <view class="month-arrow" bindtap="onPreviousMonth" aria-label="上个月">‹</view>
+      <view class="month-title" bindtap="onBackToCurrentMonth">{{monthText}}</view>
+      <view class="month-arrow" bindtap="onNextMonth" aria-label="下个月">›</view>
+    </view>
+
+    <view class="week-row">
+      <text class="week-cell" wx:for="{{weekdays}}" wx:key="*this">{{item}}</text>
+    </view>
+
+    <view class="calendar-grid">
+      <view class="day-cell {{item.currentMonth ? '' : 'muted'}} {{item.isToday ? 'today' : ''}} {{item.selected ? 'selected' : ''}}"
+        wx:for="{{calendarDays}}" wx:key="key" data-date="{{item.date}}" data-year="{{item.year}}" data-month="{{item.month}}"
+        bindtap="onDayTap">
+        <text class="day-number">{{item.day}}</text>
+        <view class="event-dot" wx:if="{{item.hasItems}}"></view>
+      </view>
+    </view>
+  </view>
+
+  <view class="state-card" wx:if="{{errorCode}}">
+    <text class="state-icon">♡</text>
+    <text class="state-title">{{errorMessage}}</text>
+    <view class="state-action" wx:if="{{errorCode === 'NOT_BOUND' || errorCode === 'BINDING_INVALID'}}" bindtap="onGoBind">去绑定</view>
+    <view class="state-action secondary" wx:else bindtap="onRetry">重新加载</view>
+  </view>
+
+  <view class="loading-card" wx:elif="{{loading}}">
+    <text>正在加载日程...</text>
+  </view>
+
+  <view class="day-section" wx:else>
+    <view class="day-title">{{selectedDateText}} · 今日安排</view>
+    <view class="empty-day" wx:if="{{selectedList.length === 0}}">
+      <text class="empty-day-title">这一天还没有事项</text>
+      <text class="empty-day-hint">记录一件值得一起期待的小事吧</text>
+    </view>
+
+    <view class="schedule-list" wx:else>
+      <view class="schedule-item {{item.completed ? 'completed' : ''}}" wx:for="{{selectedList}}" wx:key="_id"
+        data-id="{{item._id}}" bindtap="onEditItem">
+        <view class="toggle-button {{item.typeClass}} {{item.completed ? 'checked' : ''}}" wx:if="{{item.type !== 'schedule'}}"
+          data-id="{{item._id}}" data-completed="{{item.completed}}" catchtap="onToggle">
+          <text>{{item.completed ? '✓' : (item.type === 'todo' ? '□' : '○')}}</text>
+        </view>
+        <view class="time-column" wx:else>
+          <text class="time-text">{{item.timeText || '全天'}}</text>
+        </view>
+        <view class="item-main">
+          <view class="item-topline">
+            <text class="item-title">{{item.title}}</text>
+            <text class="type-tag {{item.typeClass}}">{{item.typeText}}</text>
+          </view>
+          <text class="item-time-mobile" wx:if="{{item.type !== 'schedule' && item.timeText}}">{{item.timeText}}</text>
+          <text class="item-note" wx:if="{{item.note}}">{{item.note}}</text>
+          <text class="item-state" wx:if="{{item.stateText}}">{{item.stateText}}{{item.completedHint ? ' · ' + item.completedHint : ''}}</text>
+        </view>
+        <text class="item-arrow">›</text>
+      </view>
+    </view>
+  </view>
+
+  <view class="create-fab" wx:if="{{!errorCode}}" bindtap="onCreate">＋ 新建事项</view>
+</view>

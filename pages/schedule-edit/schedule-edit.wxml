@@ -1,0 +1,65 @@
+<view class="edit-page">
+  <view class="state-card" wx:if="{{errorCode}}">
+    <text class="state-title">{{errorMessage}}</text>
+    <view class="state-action" wx:if="{{errorCode === 'NOT_BOUND' || errorCode === 'BINDING_INVALID'}}" bindtap="onGoBind">去绑定</view>
+    <view class="state-action" wx:else bindtap="onRetry">重新加载</view>
+  </view>
+
+  <view class="loading-card" wx:elif="{{loading}}">正在加载事项...</view>
+
+  <view wx:else>
+    <view class="form-card">
+      <view class="field-block">
+        <text class="field-label">事项类型</text>
+        <view class="type-options">
+          <view class="type-option {{type === item.value ? 'active' : ''}}" wx:for="{{types}}" wx:key="value"
+            data-type="{{item.value}}" bindtap="onTypeTap">
+            <text class="type-name">{{item.label}}</text>
+            <text class="type-hint">{{item.hint}}</text>
+          </view>
+        </view>
+      </view>
+
+      <view class="field-block">
+        <text class="field-label"><text class="required">*</text>标题</text>
+        <input class="text-input" value="{{title}}" maxlength="60" placeholder="例如：一起吃晚饭" bindinput="onTitleInput" />
+      </view>
+
+      <view class="field-block">
+        <text class="field-label"><text class="required">*</text>日期</text>
+        <picker mode="date" value="{{date}}" bindchange="onDateChange">
+          <view class="picker-row"><text>{{date}}</text><text class="arrow">›</text></view>
+        </picker>
+      </view>
+
+      <view class="time-row">
+        <view class="time-field">
+          <text class="field-label">开始时间</text>
+          <picker mode="time" value="{{startTime || '09:00'}}" bindchange="onStartTimeChange">
+            <view class="picker-row"><text class="{{startTime ? '' : 'placeholder'}}">{{startTime || '不设置'}}</text><text class="arrow">›</text></view>
+          </picker>
+          <text class="clear-time" wx:if="{{startTime}}" bindtap="onClearStartTime">清除时间</text>
+        </view>
+        <view class="time-field">
+          <text class="field-label">结束时间</text>
+          <picker mode="time" value="{{endTime || startTime || '10:00'}}" bindchange="onEndTimeChange">
+            <view class="picker-row"><text class="{{endTime ? '' : 'placeholder'}}">{{endTime || '不设置'}}</text><text class="arrow">›</text></view>
+          </picker>
+          <text class="clear-time" wx:if="{{endTime}}" bindtap="onClearEndTime">清除时间</text>
+        </view>
+      </view>
+
+      <view class="field-block">
+        <text class="field-label">备注</text>
+        <textarea class="note-input" value="{{note}}" maxlength="500" placeholder="补充地点、准备事项等（选填）" bindinput="onNoteInput" />
+        <text class="counter">{{note.length}}/500</text>
+      </view>
+    </view>
+
+    <view class="delete-button" wx:if="{{editMode}}" bindtap="onDelete">删除事项</view>
+    <view class="bottom-space"></view>
+    <view class="save-bar">
+      <view class="save-button {{saving ? 'disabled' : ''}}" bindtap="onSave">{{saving ? '保存中...' : '保存'}}</view>
+    </view>
+  </view>
+</view>

@@ -1,0 +1,54 @@
+.schedule-page {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 24rpx 24rpx calc(220rpx + env(safe-area-inset-bottom));
+}
+.calendar-card, .day-section, .state-card, .loading-card {
+  background: #fff;
+  border-radius: 24rpx;
+  box-shadow: 0 4rpx 18rpx rgba(31, 35, 41, 0.05);
+}
+.calendar-card { padding: 24rpx 20rpx 20rpx; }
+.month-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18rpx; }
+.month-arrow { width: 72rpx; height: 64rpx; display: flex; align-items: center; justify-content: center; color: #FF6B81; font-size: 52rpx; border-radius: 32rpx; background: #FFF5F7; }
+.month-title { font-size: 34rpx; font-weight: 650; color: #1F2329; padding: 12rpx 30rpx; }
+.week-row, .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.week-cell { text-align: center; color: #9AA0A6; font-size: 24rpx; padding: 12rpx 0; }
+.day-cell { height: 76rpx; position: relative; display: flex; align-items: center; justify-content: center; color: #30343B; border-radius: 18rpx; }
+.day-number { position: relative; z-index: 1; font-size: 27rpx; }
+.day-cell.muted { color: #CBD0D6; }
+.day-cell.today:not(.selected) .day-number { color: #FF6B81; font-weight: 700; }
+.day-cell.today:not(.selected)::after { content: ''; position: absolute; width: 52rpx; height: 52rpx; border: 2rpx solid #FFB3BF; border-radius: 50%; }
+.day-cell.selected { color: #fff; background: #FF6B81; font-weight: 700; }
+.event-dot { position: absolute; bottom: 7rpx; width: 8rpx; height: 8rpx; border-radius: 50%; background: #FF6B81; }
+.day-cell.selected .event-dot { background: #fff; }
+.day-section { margin-top: 20rpx; padding: 28rpx 24rpx; }
+.day-title { font-size: 31rpx; font-weight: 650; margin-bottom: 22rpx; }
+.empty-day { padding: 64rpx 20rpx; display: flex; flex-direction: column; align-items: center; }
+.empty-day-title { color: #666; font-size: 28rpx; }
+.empty-day-hint { color: #AEB4BC; font-size: 24rpx; margin-top: 12rpx; }
+.schedule-item { display: flex; align-items: center; min-height: 104rpx; padding: 18rpx 4rpx; border-bottom: 1rpx solid #F0F1F3; }
+.schedule-item:last-child { border-bottom: none; }
+.toggle-button { width: 58rpx; height: 58rpx; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 18rpx; font-size: 34rpx; color: #E6A23C; background: #FFF7E8; }
+.toggle-button.checkin { color: #5B8FF9; background: #EDF4FF; }
+.toggle-button.checked { color: #fff; background: #52B788; }
+.time-column { width: 116rpx; flex-shrink: 0; margin-right: 12rpx; }
+.time-text { color: #FF6B81; font-size: 25rpx; font-weight: 600; }
+.item-main { flex: 1; min-width: 0; }
+.item-topline { display: flex; align-items: center; gap: 12rpx; }
+.item-title { color: #25282D; font-size: 29rpx; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.completed .item-title { color: #9AA0A6; text-decoration: line-through; }
+.type-tag { flex-shrink: 0; padding: 4rpx 12rpx; border-radius: 14rpx; font-size: 20rpx; color: #FF6B81; background: #FFF0F2; }
+.type-tag.todo { color: #B7791F; background: #FFF7E8; }
+.type-tag.checkin { color: #3D72C8; background: #EDF4FF; }
+.item-time-mobile, .item-note, .item-state { display: block; margin-top: 7rpx; font-size: 23rpx; color: #8B919A; }
+.item-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.item-state { color: #52A675; }
+.item-arrow { color: #C4C8CE; font-size: 38rpx; margin-left: 10rpx; }
+.state-card, .loading-card { margin-top: 20rpx; padding: 80rpx 30rpx; text-align: center; color: #7D848D; }
+.state-icon { display: block; font-size: 68rpx; color: #FFB3BF; }
+.state-title { display: block; font-size: 28rpx; margin-top: 18rpx; }
+.state-action { display: inline-flex; margin-top: 28rpx; height: 70rpx; padding: 0 36rpx; align-items: center; border-radius: 35rpx; color: #fff; background: #FF6B81; }
+.state-action.secondary { color: #FF6B81; background: #FFF0F2; }
+.create-fab { position: fixed; right: 28rpx; bottom: calc(36rpx + env(safe-area-inset-bottom)); z-index: 20; height: 88rpx; padding: 0 34rpx; display: flex; align-items: center; justify-content: center; border-radius: 44rpx; color: #fff; background: #FF6B81; font-size: 29rpx; font-weight: 600; box-shadow: 0 8rpx 20rpx rgba(255, 107, 129, 0.28); }
+.create-fab:active { opacity: .88; }
