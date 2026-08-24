@@ -1,0 +1,157 @@
+/* pages/message/message.wxss —— 消息页样式 */
+
+/* 开启通知引导条 */
+.guide-bar {
+  display: flex;
+  align-items: center;
+  margin: 24rpx 24rpx 0;
+  padding: 24rpx 28rpx;
+  background: linear-gradient(90deg, #FFF0F2, #FFE3E8);
+  border-radius: 20rpx;
+}
+.guide-text {
+  flex: 1;
+  min-width: 0;
+  font-size: 26rpx;
+  color: #1F2329;
+  display: flex;
+  align-items: center;
+}
+.guide-icon {
+  margin-right: 10rpx;
+  font-size: 30rpx;
+}
+.guide-btn {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 10rpx 28rpx;
+  border-radius: 32rpx;
+  background: #FF6B81;
+  color: #FFFFFF;
+  font-size: 26rpx;
+  font-weight: 600;
+}
+.guide-close {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  width: 48rpx;
+  height: 48rpx;
+  line-height: 44rpx;
+  text-align: center;
+  border-radius: 50%;
+  background: rgba(255, 107, 129, 0.15);
+  color: #FF6B81;
+  font-size: 32rpx;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  padding: 32rpx 32rpx 0;
+  font-size: 30rpx;
+  font-weight: 600;
+  color: #1F2329;
+}
+.section-count {
+  margin-left: 12rpx;
+  background: #FF6B81;
+  color: #FFFFFF;
+  font-size: 22rpx;
+  padding: 2rpx 16rpx;
+  border-radius: 20rpx;
+  font-weight: 500;
+}
+
+.msg-item {
+  display: flex;
+  align-items: center;
+  margin-top: 20rpx;
+}
+.msg-item:first-of-type {
+  margin-top: 20rpx;
+}
+
+.msg-icon {
+  width: 80rpx;
+  height: 80rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34rpx;
+  margin-right: 24rpx;
+  flex-shrink: 0;
+}
+.msg-icon.todo {
+  background: #FFF6E5;
+  color: #E6A23C;
+}
+.msg-icon.approved {
+  background: #E8F8EF;
+  color: #07C160;
+}
+.msg-icon.rejected {
+  background: #FDECEC;
+  color: #F0483E;
+}
+
+.msg-body {
+  flex: 1;
+  min-width: 0;
+}
+.msg-line1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.msg-name {
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2329;
+}
+.msg-time {
+  font-size: 22rpx;
+  color: #B8BEC6;
+}
+.msg-title {
+  font-size: 30rpx;
+  color: #1F2329;
+  margin-top: 10rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.msg-sub {
+  font-size: 24rpx;
+  color: #9AA0A6;
+  margin-top: 8rpx;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.msg-action {
+  flex-shrink: 0;
+  margin-left: 16rpx;
+  padding: 10rpx 28rpx;
+  border-radius: 32rpx;
+  background: #FFF0F2;
+  color: #FF6B81;
+  font-size: 24rpx;
+  font-weight: 500;
+}
+
+.empty-sub {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #C4C9D0;
+}
+
+.loading-wrap {
+  padding: 120rpx 0;
+  text-align: center;
+}
+.loading-text {
+  color: #9AA0A6;
+  font-size: 26rpx;
+}

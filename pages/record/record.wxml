@@ -1,0 +1,63 @@
+<!-- pages/record/record.wxml —— 记录：双主标签 + 二级状态筛选 -->
+<view class="page">
+
+  <!-- 主标签栏：角色切换 -->
+  <view class="role-tabs">
+    <view class="role-tab {{activeRole === item.key ? 'active' : ''}}"
+      wx:for="{{roleTabs}}" wx:key="key" bindtap="onRoleTap" data-key="{{item.key}}">
+      <text class="role-tab-text">{{item.label}}</text>
+      <view class="role-tab-indicator" wx:if="{{activeRole === item.key}}"></view>
+    </view>
+  </view>
+
+  <!-- 二级筛选栏：状态 -->
+  <view class="status-bar">
+    <view class="status-item {{activeStatus === item.key ? 'active' : ''}}"
+      wx:for="{{statusFilters}}" wx:key="key" bindtap="onStatusTap" data-key="{{item.key}}">
+      {{item.label}}
+    </view>
+  </view>
+
+  <!-- 记录列表 -->
+  <view class="card record-item" wx:for="{{list}}" wx:key="_id" bindtap="onTapItem" data-id="{{item._id}}">
+    <view class="record-top">
+      <view class="record-location">{{item.reason || '未填写事由'}}</view>
+      <view class="status-tag {{item.statusClass}}">{{item.statusText}}</view>
+    </view>
+    <view class="record-line">
+      <text class="record-label">地点</text>
+      <text class="record-value">{{item.location || '--'}}</text>
+    </view>
+    <view class="record-line">
+      <text class="record-label">{{isCreator ? '审批人' : '发起人'}}</text>
+      <text class="record-value">{{isCreator ? item.processedByName : item.creatorName}}</text>
+    </view>
+    <view class="record-line">
+      <text class="record-label">归来</text>
+      <text class="record-value">{{item.returnTime}}</text>
+    </view>
+    <view class="record-bottom">
+      <text class="record-time">{{item.createdAtText}}</text>
+      <text class="record-arrow">›</text>
+    </view>
+  </view>
+
+  <!-- 空状态 -->
+  <view class="empty-wrap" wx:if="{{!loading && list.length === 0}}">
+    <text class="empty-icon">{{activeRole === 'creator' ? '📋' : '📬'}}</text>
+    <text class="empty-text">{{activeRole === 'creator' ? '还没有发起过报备' : '还没有需要审批的报备'}}</text>
+    <view class="empty-sub">{{activeStatus ? '换个筛选条件试试' : '去首页发起第一次报备吧'}}</view>
+  </view>
+
+  <!-- 加载中 -->
+  <view class="loading-wrap" wx:if="{{loading}}">
+    <text class="loading-text">加载中...</text>
+  </view>
+
+  <!-- 加载更多状态 -->
+  <view class="load-more" wx:if="{{!loading && list.length > 0}}">
+    <text class="load-more-text">{{loadingMore ? '加载中...' : (hasMore ? '上拉加载更多' : '已经到底啦')}}</text>
+  </view>
+
+  <view class="page-bottom"></view>
+</view>

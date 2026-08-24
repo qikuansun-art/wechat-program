@@ -1,0 +1,72 @@
+<!-- pages/message/message.wxml —— 消息：审批通知 -->
+<view class="page">
+
+  <!-- 开启通知引导条 -->
+  <view class="guide-bar" wx:if="{{showGuide}}">
+    <view class="guide-text">
+      <text class="guide-icon">💌</text>
+      <text>开启通知，TA 发起报备时第一时间提醒你</text>
+    </view>
+    <view class="guide-btn" bindtap="onEnableNotify">开启</view>
+    <view class="guide-close" bindtap="onCloseGuide">×</view>
+  </view>
+
+  <!-- 待我审批 -->
+  <block wx:if="{{todoCount > 0}}">
+    <view class="section-title">
+      <text>待我审批</text>
+      <text class="section-count">{{todoCount}}</text>
+    </view>
+    <view class="card msg-item" wx:for="{{list}}" wx:key="reportId"
+      wx:if="{{item.type === 'todo'}}" bindtap="onTapItem" data-id="{{item.reportId}}">
+      <view class="msg-icon todo">✋</view>
+      <view class="msg-body">
+        <view class="msg-line1">
+          <text class="msg-name">{{item.creatorName}}</text>
+          <text class="msg-time">{{item.createdAtText}}</text>
+        </view>
+        <view class="msg-title">要去「{{item.location}}」</view>
+        <view class="msg-sub">预计 {{item.returnTime}} 归来</view>
+      </view>
+      <view class="msg-action">去审批</view>
+    </view>
+  </block>
+
+  <!-- 审批结果 -->
+  <block wx:if="{{list.length - todoCount > 0}}">
+    <view class="section-title">
+      <text>审批结果</text>
+    </view>
+    <view class="card msg-item" wx:for="{{list}}" wx:key="reportId"
+      wx:if="{{item.type === 'result'}}" bindtap="onTapItem" data-id="{{item.reportId}}">
+      <view class="msg-icon {{item.status === 'approved' ? 'approved' : 'rejected'}}">
+        {{item.status === 'approved' ? '✓' : '✕'}}
+      </view>
+      <view class="msg-body">
+        <view class="msg-line1">
+          <text class="msg-name">{{item.creatorName}}</text>
+          <text class="msg-time">{{item.processedAtText}}</text>
+        </view>
+        <view class="msg-title">「{{item.location}}」{{item.statusText}}</view>
+        <view class="msg-sub" wx:if="{{item.status === 'rejected'}}">
+          理由：{{item.rejectReason}}
+        </view>
+      </view>
+      <view class="msg-action">查看</view>
+    </view>
+  </block>
+
+  <!-- 空状态 -->
+  <view class="empty-wrap" wx:if="{{!loading && list.length === 0}}">
+    <text class="empty-icon">💌</text>
+    <text class="empty-text">还没有消息</text>
+    <view class="empty-sub">伴侣发来的报备和审批结果会出现在这里</view>
+  </view>
+
+  <!-- 加载中 -->
+  <view class="loading-wrap" wx:if="{{loading}}">
+    <text class="loading-text">加载中...</text>
+  </view>
+
+  <view class="page-bottom"></view>
+</view>

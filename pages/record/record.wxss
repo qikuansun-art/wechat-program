@@ -1,0 +1,144 @@
+/* pages/record/record.wxss —— 记录页样式 */
+
+/* ====== 主标签栏（角色切换） ====== */
+.role-tabs {
+  display: flex;
+  background: #FFFFFF;
+  padding: 0 24rpx;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1rpx solid #F2F3F5;
+}
+.role-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24rpx 0 20rpx;
+  position: relative;
+}
+.role-tab-text {
+  font-size: 30rpx;
+  color: #9AA0A6;
+  transition: color 0.2s;
+}
+.role-tab.active .role-tab-text {
+  color: #1F2329;
+  font-weight: 600;
+}
+.role-tab-indicator {
+  width: 56rpx;
+  height: 6rpx;
+  border-radius: 3rpx;
+  background: #FF6B81;
+  margin-top: 8rpx;
+}
+
+/* ====== 二级筛选栏（状态） ====== */
+.status-bar {
+  display: flex;
+  background: #FFFFFF;
+  padding: 16rpx 24rpx 20rpx;
+  gap: 16rpx;
+}
+.status-item {
+  flex: 1;
+  text-align: center;
+  padding: 12rpx 0;
+  font-size: 26rpx;
+  color: #9AA0A6;
+  border-radius: 32rpx;
+  background: #F7F8FA;
+}
+.status-item.active {
+  background: #FFF0F2;
+  color: #FF6B81;
+  font-weight: 600;
+}
+
+/* ====== 记录卡片 ====== */
+.record-item {
+  margin-top: 20rpx;
+}
+.record-item:active {
+  opacity: 0.7;
+}
+.record-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20rpx;
+}
+.record-location {
+  font-size: 32rpx;
+  font-weight: 600;
+  color: #1F2329;
+  max-width: 65%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.record-line {
+  display: flex;
+  margin-top: 12rpx;
+}
+.record-label {
+  width: 80rpx;
+  flex-shrink: 0;
+  color: #9AA0A6;
+  font-size: 26rpx;
+}
+.record-value {
+  flex: 1;
+  color: #1F2329;
+  font-size: 26rpx;
+}
+.record-reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.record-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 20rpx;
+  padding-top: 20rpx;
+  border-top: 1rpx solid #F2F3F5;
+}
+.record-time {
+  font-size: 24rpx;
+  color: #B8BEC6;
+}
+.record-arrow {
+  font-size: 36rpx;
+  color: #C4C9D0;
+  line-height: 1;
+}
+
+/* ====== 空状态 ====== */
+.empty-sub {
+  margin-top: 12rpx;
+  font-size: 24rpx;
+  color: #C4C9D0;
+}
+
+/* ====== 加载状态 ====== */
+.loading-wrap {
+  padding: 120rpx 0;
+  text-align: center;
+}
+.loading-text {
+  color: #9AA0A6;
+  font-size: 26rpx;
+}
+
+.load-more {
+  padding: 24rpx 0;
+  text-align: center;
+}
+.load-more-text {
+  font-size: 24rpx;
+  color: #C4C9D0;
+}

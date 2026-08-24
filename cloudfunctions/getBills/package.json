@@ -1,0 +1,9 @@
+{
+  "name": "getBills",
+  "version": "1.0.0",
+  "description": "查询账单（按月份，情侣共享）",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

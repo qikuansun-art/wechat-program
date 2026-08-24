@@ -1,0 +1,46 @@
+<!-- pages/bind/bind.wxml —— 绑定伴侣 -->
+<view class="page">
+
+<!-- ✅新增：我的邀请码模块，放在最顶部 -->
+<view class="card my-code-card" wx:if="{{myCode}}">
+  <view class="intro-title">🔗 我的邀请码</view>
+  <view class="my-code">{{myCode}}</view>
+  <button class="btn-primary copy-btn" bindtap="copyMyCode">复制邀请码发给伴侣</button>
+  <view class="bind-note">把此邀请码发给对方，对方在下方输入框填写即可完成绑定</view>
+</view>
+
+<view class="card intro-card">
+  <view class="intro-title">💞 绑定你的伴侣</view>
+  <view class="intro-text">输入 TA 的邀请码，或扫 TA 分享的小程序码，绑定后即可互相发起报备与审批。</view>
+  <view class="intro-step">
+    <view class="step-line">
+      <text class="step-num">1</text>
+      <text class="step-text">复制上方你的邀请码发给伴侣</text>
+    </view>
+    <view class="step-line">
+      <text class="step-num">2</text>
+      <text class="step-text">在这里输入对方邀请码，或扫码对方的小程序码</text>
+    </view>
+    <view class="step-line">
+      <text class="step-num">3</text>
+      <text class="step-text">双方确认后即绑定成功，随时同步行踪</text>
+    </view>
+  </view>
+</view>
+
+<view class="card bind-form">
+  <view class="form-label">伴侣邀请码</view>
+  <view class="code-input-row">
+    <input class="code-input" placeholder="例如：ABC123" placeholder-class="form-placeholder"
+      value="{{code}}" bindinput="onCodeInput" maxlength="10" />
+    <view class="scan-btn" bindtap="onScan">扫码</view>
+  </view>
+  <button class="btn-primary bind-submit {{binding ? 'btn-disabled' : ''}}"
+    bindtap="onBind" hover-class="btn-hover">
+    {{binding ? '绑定中...' : '确认绑定'}}
+  </button>
+  <view class="bind-note">提示：邀请码区分大小写，输入时核对对方给出的邀请码</view>
+</view>
+
+<view class="page-bottom"></view>
+</view>

@@ -1,0 +1,55 @@
+{
+  "pages": [
+    "pages/index/index",
+    "pages/message/message",
+    "pages/record/record",
+    "pages/mine/mine",
+    "pages/bind/bind",
+    "pages/detail/detail",
+    "pages/bill/bill",
+    "pages/bill-edit/bill-edit",
+    "pages/apply/apply"
+  ],
+  "window": {
+    "backgroundTextStyle": "light",
+    "navigationBarBackgroundColor": "#FF6B81",
+    "navigationBarTitleText": "情侣报备",
+    "navigationBarTextStyle": "white",
+    "backgroundColor": "#F5F6FA"
+  },
+  "tabBar": {
+    "color": "#9AA0A6",
+    "selectedColor": "#FF6B81",
+    "backgroundColor": "#FFFFFF",
+    "borderStyle": "white",
+    "list": [
+      {
+        "pagePath": "pages/index/index",
+        "iconPath": "images/tab-home-gray.png",
+        "selectedIconPath": "images/tab-home-pink.png",
+        "text": "首页"
+      },
+      {
+        "pagePath": "pages/bill/bill",
+        "iconPath": "images/tab-message-gray.png",
+        "selectedIconPath": "images/tab-message-pink.png",
+        "text": "账单"
+      },
+      {
+        "pagePath": "pages/record/record",
+        "iconPath": "images/tab-record-gray.png",
+        "selectedIconPath": "images/tab-record-pink.png",
+        "text": "记录"
+      },
+      {
+        "pagePath": "pages/mine/mine",
+        "iconPath": "images/tab-mine-gray.png",
+        "selectedIconPath": "images/tab-mine-pink.png",
+        "text": "我的"
+      }
+    ]
+  },
+  "style": "v2",
+  "lazyCodeLoading": "requiredComponents",
+  "sitemapLocation": "sitemap.json"
+}

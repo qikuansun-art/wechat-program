@@ -1,0 +1,116 @@
+<!-- pages/apply/apply.wxml —— 申请页：报备表单 + 邀请码 -->
+<view class="page">
+
+  <!-- 邀请码卡片（仅未绑定时显示） -->
+  <view class="card code-card" wx:if="{{!bound}}">
+    <view class="code-card-title">🔗 我的邀请码</view>
+    <view class="code-card-value" wx:if="{{myCode}}">{{myCode}}</view>
+    <view class="code-card-value code-card-missing" wx:else>--</view>
+    <button class="btn-primary code-card-btn" bindtap="onCopyCode" hover-class="btn-hover">复制邀请码发给伴侣</button>
+    <view class="code-card-tip">把邀请码发给对方，对方在「我的」页输入即可绑定</view>
+  </view>
+
+  <!-- 未绑定引导 -->
+  <view class="card unbind-guide" wx:if="{{!bound}}">
+    <view class="unbind-guide-icon">💞</view>
+    <text class="unbind-guide-text">绑定伴侣后，就可以发起报备申请了</text>
+    <button class="btn-primary" bindtap="goBind" hover-class="btn-hover">去绑定伴侣</button>
+  </view>
+
+  <!-- 已绑定：报备表单 -->
+  <block wx:if="{{bound}}">
+    <view class="bound-bar">
+      <text class="bound-bar-icon">❤</text>
+      <text class="bound-bar-text">已绑定 {{partnerName}}</text>
+    </view>
+
+    <view class="card form-card">
+
+      <view class="form-group">
+        <view class="form-label"><text class="required">*</text>事由说明</view>
+        <textarea class="form-textarea" placeholder="说清楚去做什么，例如：公司加班、同事聚会" placeholder-class="form-placeholder"
+          value="{{reason}}" bindinput="onReasonInput" maxlength="200" auto-height></textarea>
+        <view class="textarea-count">{{reason.length}}/200</view>
+      </view>
+
+      <view class="form-group">
+        <view class="form-label"><text class="required">*</text>地点</view>
+        <input class="form-input" placeholder="说清楚去哪里，详细一点，不要让伴侣担心" placeholder-class="form-placeholder"
+          value="{{location}}" bindinput="onLocationInput" maxlength="50" />
+      </view>
+
+      <view class="form-group">
+        <view class="form-label">同行人员</view>
+        <input class="form-input" placeholder="选填" placeholder-class="form-placeholder"
+          value="{{companions}}" bindinput="onCompanionsInput" maxlength="50" />
+      </view>
+
+      <view class="form-group">
+        <view class="form-label">预计开始时间</view>
+        <view class="picker-row">
+          <picker mode="date" value="{{startDate}}" bindchange="onStartDateChange" start="{{startDate}}">
+            <view class="form-picker picker-item">
+              <text class="{{startDate ? 'form-picker-value' : 'form-picker-value placeholder'}}">{{startDate || '选择日期'}}</text>
+              <text class="picker-arrow">▾</text>
+            </view>
+          </picker>
+          <picker mode="time" value="{{startTime}}" bindchange="onStartTimeChange">
+            <view class="form-picker picker-item">
+              <text class="form-picker-value">{{startTime}}</text>
+              <text class="picker-arrow">▾</text>
+            </view>
+          </picker>
+        </view>
+      </view>
+
+      <view class="form-group">
+        <view class="form-label"><text class="required">*</text>预计结束时间</view>
+        <view class="picker-row">
+          <picker mode="date" value="{{date}}" bindchange="onDateChange" start="{{date}}">
+            <view class="form-picker picker-item">
+              <text class="{{date ? 'form-picker-value' : 'form-picker-value placeholder'}}">{{date || '选择日期'}}</text>
+              <text class="picker-arrow">▾</text>
+            </view>
+          </picker>
+          <picker mode="time" value="{{time}}" bindchange="onTimeChange">
+            <view class="form-picker picker-item">
+              <text class="form-picker-value">{{time}}</text>
+              <text class="picker-arrow">▾</text>
+            </view>
+          </picker>
+        </view>
+      </view>
+
+      <view class="form-group">
+        <view class="form-label">时长</view>
+        <view class="duration-row">
+          <input class="form-input duration-input" value="{{duration}}" disabled />
+          <text class="duration-unit">h</text>
+        </view>
+      </view>
+
+      <view class="form-group">
+        <view class="form-label">图片凭证</view>
+        <view class="image-list">
+          <view class="image-item" wx:for="{{images}}" wx:key="index">
+            <image class="image-preview" src="{{item.localPath || item.fileID}}" mode="aspectFill"
+              bindtap="onPreviewImage" data-idx="{{index}}" />
+            <view class="image-remove" catchtap="onRemoveImage" data-idx="{{index}}">×</view>
+            <view class="image-uploading" wx:if="{{item.uploading}}">上传中...</view>
+          </view>
+          <view class="image-add" wx:if="{{images.length < 3}}" bindtap="onChooseImage">
+            <text class="image-add-icon">+</text>
+            <text class="image-add-text">上传凭证</text>
+          </view>
+        </view>
+        <view class="form-tip">最多 3 张</view>
+      </view>
+
+      <button class="btn-primary {{submitting ? 'btn-disabled' : ''}}" bindtap="onSubmit" hover-class="btn-hover">
+        {{submitting ? '提交中...' : '发起报备'}}
+      </button>
+    </view>
+  </block>
+
+  <view class="page-bottom"></view>
+</view>

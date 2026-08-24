@@ -1,0 +1,96 @@
+<!-- pages/detail/detail.wxml —— 报备详情 + 审批 -->
+<view class="page" wx:if="{{!loading && report}}">
+
+  <!-- 状态头部 -->
+  <view class="status-header {{report.statusClass}}">
+    <view class="status-icon">
+      {{report.status === 'approved' ? '✓' : (report.status === 'rejected' ? '✕' : '…')}}
+    </view>
+    <view class="status-info">
+      <view class="status-text">{{report.statusText}}</view>
+      <view class="status-sub">
+        {{report.status === 'pending' ? (myRole === 'approver' ? '等你审批' : '等待伴侣审批') : '处理于 ' + report.processedAtText}}
+      </view>
+    </view>
+  </view>
+
+  <!-- 报备信息 -->
+  <view class="card">
+    <view class="detail-row">
+      <text class="detail-label">事由说明</text>
+      <text class="detail-value">{{report.reason}}</text>
+    </view>
+    <view class="detail-row">
+      <text class="detail-label">发起人</text>
+      <text class="detail-value">{{report.creatorName}}</text>
+    </view>
+    <view class="detail-row" wx:if="{{report.processedByName}}">
+      <text class="detail-label">审批人</text>
+      <text class="detail-value">{{report.processedByName}}</text>
+    </view>
+    <view class="detail-row">
+      <text class="detail-label">外出地点</text>
+      <text class="detail-value">{{report.location}}</text>
+    </view>
+    <view class="detail-row" wx:if="{{report.startTime}}">
+      <text class="detail-label">预计开始</text>
+      <text class="detail-value">{{report.startTime}}</text>
+    </view>
+    <view class="detail-row" wx:if="{{report.companions}}">
+      <text class="detail-label">同行人员</text>
+      <text class="detail-value">{{report.companions}}</text>
+    </view>
+    <view class="detail-row">
+      <text class="detail-label">预计归来</text>
+      <text class="detail-value">{{report.returnTime}}</text>
+    </view>
+    <view class="detail-row">
+      <text class="detail-label">发起时间</text>
+      <text class="detail-value">{{report.createdAtText}}</text>
+    </view>
+
+    <view class="detail-images" wx:if="{{report.images.length > 0}}">
+      <view class="detail-label">图片凭证</view>
+      <view class="image-list">
+        <image class="detail-image" wx:for="{{report.images}}" wx:key="*this" src="{{item}}"
+          mode="aspectFill" bindtap="onPreviewImage" data-idx="{{index}}" />
+      </view>
+    </view>
+
+    <view class="reject-box" wx:if="{{report.status === 'rejected' && report.rejectReason}}">
+      <view class="reject-title">驳回理由</view>
+      <view class="reject-content">{{report.rejectReason}}</view>
+      <view class="reject-by" wx:if="{{report.processedByName}}">— {{report.processedByName}}</view>
+    </view>
+  </view>
+
+  <!-- 审批操作栏 -->
+  <view class="approve-bar" wx:if="{{canApprove}}">
+    <button class="approve-btn reject" bindtap="onReject">驳回</button>
+    <button class="approve-btn pass" bindtap="onApprove">批准</button>
+  </view>
+
+  <view class="page-bottom" wx:if="{{canApprove}}"></view>
+  <view class="page-bottom" wx:else></view>
+
+  <!-- 驳回理由弹层 -->
+  <view class="mask" wx:if="{{showReject}}" bindtap="onRejectCancel">
+    <view class="reject-modal" catchtap="onModalTap">
+      <scroll-view scroll-y class="modal-scroll">
+        <view class="modal-title">填写驳回理由</view>
+        <textarea class="modal-textarea" placeholder="告诉 TA 为什么驳回，例如：太晚了不安全、明天还要上班" 
+          placeholder-class="form-placeholder" value="{{rejectReason}}" bindinput="onRejectInput" bindblur="onRejectBlur" maxlength="100"
+          cursor-spacing="40" adjust-position="{{false}}" />
+        <view class="modal-actions">
+          <button class="modal-btn cancel" bindtap="onRejectCancel">取消</button>
+          <button class="modal-btn confirm" bindtap="onRejectConfirm">确认驳回</button>
+        </view>
+      </scroll-view>
+    </view>
+  </view>
+</view>
+
+<!-- 加载中 -->
+<view class="loading-wrap" wx:if="{{loading}}">
+  <text class="loading-text">加载中...</text>
+</view>

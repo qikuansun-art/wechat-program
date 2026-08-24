@@ -1,0 +1,130 @@
+<!-- pages/index/index.wxml —— 首页：滚动 Banner + 功能模块 -->
+<view class="page">
+
+  <!-- ====== 顶部滚动 Banner ====== -->
+  <view class="banner-wrap">
+    <swiper class="banner-swiper" indicator-dots="{{banners.length > 1}}" indicator-color="rgba(255,255,255,0.4)"
+      indicator-active-color="#FF6B81" autoplay="{{banners.length > 1}}" interval="3500" duration="300"
+      circular="{{banners.length > 1}}" bindchange="onBannerChange">
+      <swiper-item wx:for="{{bannerUrls}}" wx:key="*this">
+        <image class="banner-img" src="{{item}}" mode="aspectFill" bindtap="onPreviewBanner" data-idx="{{index}}" binderror="onBannerImgError" />
+      </swiper-item>
+      <swiper-item wx:if="{{banners.length === 0}}">
+        <view class="banner-empty">
+          <text class="banner-empty-icon">📸</text>
+          <text class="banner-empty-text">点击下方按钮添加轮播图</text>
+        </view>
+      </swiper-item>
+    </swiper>
+    <view class="banner-counter" wx:if="{{banners.length > 1}}">{{bannerCurrent + 1}}/{{banners.length}}</view>
+    <view class="banner-actions">
+      <view class="banner-action-btn" bindtap="onAddBanner" wx:if="{{!uploading}}">+ 添加图片</view>
+      <view class="banner-action-btn" wx:if="{{banners.length > 0}}" bindtap="onManageBanners">管理</view>
+    </view>
+  </view>
+
+  <!-- ====== Banner 管理弹层 ====== -->
+  <view class="banner-manage-mask" wx:if="{{showBannerManage}}" bindtap="onManageMaskTap">
+    <view class="banner-manage-panel" catchtap="onCloseManage">
+      <view class="manage-header">
+        <text class="manage-title">轮播图管理 ({{manageBanners.length}}/10)</text>
+        <text class="manage-close" bindtap="onCloseManage">✕</text>
+      </view>
+      <scroll-view scroll-y class="manage-list">
+        <view class="manage-item" wx:for="{{manageBanners}}" wx:key="*this">
+          <image class="manage-thumb" src="{{manageBannerUrls[index] || item}}" mode="aspectFill" bindtap="onPreviewBanner" data-idx="{{index}}" />
+          <view class="manage-item-info">
+            <text class="manage-item-label">第 {{index + 1}} 张</text>
+          </view>
+          <view class="manage-item-btns">
+            <view class="manage-btn manage-btn-up" wx:if="{{index > 0}}" bindtap="onManageMoveUp" data-idx="{{index}}">↑</view>
+            <view class="manage-btn manage-btn-down" wx:if="{{index < manageBanners.length - 1}}" bindtap="onManageMoveDown" data-idx="{{index}}">↓</view>
+            <view class="manage-btn manage-btn-del" bindtap="onManageDelete" data-idx="{{index}}">删除</view>
+          </view>
+        </view>
+      </scroll-view>
+      <view class="manage-footer">
+        <view class="manage-add-btn" bindtap="onAddBanner" wx:if="{{manageBanners.length < 10}}">+ 继续添加</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ====== 功能模块 ====== -->
+  <view class="module-grid">
+
+    <!-- 记账模块 -->
+    <view class="module-card" bindtap="goBill" hover-class="card-hover">
+      <view class="module-icon module-icon-bill">💰</view>
+      <view class="module-info">
+        <view class="module-title">日常记账</view>
+        <view class="module-desc">情侣共享账本</view>
+      </view>
+      <view class="module-expense" wx:if="{{billMonthExpense !== null}}">
+        <text class="module-expense-label">本月支出</text>
+        <text class="module-expense-value">¥{{billMonthExpense}}</text>
+      </view>
+      <text class="module-arrow">›</text>
+    </view>
+
+    <!-- 申请模块（报备） -->
+    <view class="module-card" bindtap="goApply" hover-class="card-hover">
+      <view class="module-icon module-icon-apply">📋</view>
+      <view class="module-info">
+        <view class="module-title">发起申请</view>
+        <view class="module-desc">外出报备审批</view>
+      </view>
+      <text class="module-arrow">›</text>
+    </view>
+
+    <!-- 邀请码模块（仅未绑定显示） -->
+    <view class="module-card module-invite" wx:if="{{!bound}}" bindtap="goBind" hover-class="card-hover">
+      <view class="module-icon module-icon-invite">💞</view>
+      <view class="module-info">
+        <view class="module-title">绑定伴侣</view>
+        <view class="module-desc">邀请好友绑定</view>
+      </view>
+      <text class="module-arrow">›</text>
+    </view>
+  </view>
+
+  <!-- ====== 已绑定状态条 ====== -->
+  <view class="bound-bar" wx:if="{{bound && !loading}}">
+    <text class="bound-bar-icon">❤</text>
+    <text class="bound-bar-text">已绑定 {{partnerName}} · 发起报备后 TA 会收到提醒</text>
+  </view>
+
+  <!-- ====== 待审批列表 ====== -->
+  <view class="card pending-card" wx:if="{{bound && pendingReports.length > 0}}">
+    <view class="section-title">待我审批 <text class="pending-count">{{pendingReports.length}}</text></view>
+    <view class="pending-list">
+      <view class="pending-item" wx:for="{{pendingReports}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}">
+        <view class="pending-left">
+          <view class="pending-location">{{item.reason || '未填写事由'}}</view>
+          <view class="pending-meta">
+            <text class="pending-creator">{{item.creatorName}} 发起</text>
+            <text class="pending-time">{{item.createdAtText}}</text>
+          </view>
+        </view>
+        <view class="status-tag pending">待审批</view>
+      </view>
+    </view>
+  </view>
+
+  <!-- ====== 最近报备 ====== -->
+  <view class="card pending-card" wx:if="{{bound && latestReports.length > 0}}">
+    <view class="section-title">最近报备</view>
+    <view class="pending-list">
+      <view class="pending-item" wx:for="{{latestReports}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}">
+        <view class="pending-left">
+          <view class="pending-location">{{item.reason || '未填写事由'}}</view>
+          <view class="pending-meta">
+            <text class="pending-time">{{item.createdAtText}}</text>
+          </view>
+        </view>
+        <view class="status-tag {{item.statusClass}}">{{item.statusText}}</view>
+      </view>
+    </view>
+  </view>
+
+  <view class="page-bottom"></view>
+</view>

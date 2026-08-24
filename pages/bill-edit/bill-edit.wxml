@@ -1,0 +1,76 @@
+<!-- pages/bill-edit/bill-edit.wxml —— 记一笔 / 编辑账单 -->
+<view class="page">
+
+  <!-- 页面标题 -->
+  <view class="page-title" wx:if="{{editMode}}">编辑账单</view>
+
+  <!-- 类型切换 -->
+  <view class="type-tabs">
+    <view class="type-tab {{type === 'expense' ? 'active' : ''}}" data-type="expense" bindtap="onTypeChange">支出</view>
+    <view class="type-tab {{type === 'income' ? 'active' : ''}}" data-type="income" bindtap="onTypeChange">收入</view>
+  </view>
+
+  <!-- 金额输入 -->
+  <view class="amount-box">
+    <text class="amount-symbol">¥</text>
+    <input class="amount-input" type="digit" placeholder="0.00" placeholder-class="amount-placeholder"
+      value="{{amount}}" bindinput="onAmountInput" focus />
+  </view>
+
+  <!-- 事项 -->
+  <view class="field-row">
+    <text class="field-label">事项</text>
+    <input class="field-input" placeholder="例如：午餐、打车" placeholder-class="field-placeholder"
+      value="{{matter}}" bindinput="onMatterInput" maxlength="30" />
+  </view>
+
+  <!-- 日期 -->
+  <view class="field-row">
+    <text class="field-label">日期</text>
+    <picker mode="date" value="{{date}}" bindchange="onDateChange">
+      <view class="field-value">{{date}}</view>
+    </picker>
+  </view>
+
+  <!-- 备注 -->
+  <view class="field-row">
+    <text class="field-label">备注</text>
+    <input class="field-input" placeholder="备注（选填）" placeholder-class="field-placeholder"
+      value="{{note}}" bindinput="onNoteInput" maxlength="50" />
+  </view>
+
+  <!-- 分类（Flex 自动换行） -->
+  <view class="cat-section">
+    <view class="cat-label">分类</view>
+    <view class="cat-wrap">
+      <view class="cat-item {{selectedCategory === item.key ? 'active' : ''}}"
+        wx:for="{{categories}}" wx:key="key" data-key="{{item.key}}" bindtap="onCategoryTap">
+        <text class="cat-item-icon">{{item.icon}}</text>
+        <text class="cat-item-name">{{item.name}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 记录人 -->
+  <view class="creator-row">
+    <text class="creator-label">记录人</text>
+    <text class="creator-name">{{creatorName}}</text>
+  </view>
+
+  <!-- 我的邀请码（仅未绑定时显示） -->
+  <view class="invite-section" wx:if="{{!bound && inviteCode}}">
+    <view class="invite-header">
+      <text class="invite-title">💝 我的邀请码</text>
+      <text class="invite-hint">分享给 TA，绑定后一起记账</text>
+    </view>
+    <view class="invite-code-row">
+      <text class="invite-code">{{inviteCode}}</text>
+      <view class="invite-copy-btn" bindtap="onCopyInviteCode">复制</view>
+    </view>
+  </view>
+
+  <!-- 保存 -->
+  <view class="save-bar">
+    <view class="save-btn" bindtap="onSave">{{editMode ? '保存修改' : '保存'}}</view>
+  </view>
+</view>

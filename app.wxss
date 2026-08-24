@@ -1,0 +1,187 @@
+/* app.wxss —— 全局样式
+ * 主题色：情侣粉 #FF6B81（主色）/ #FFB3BF（浅色辅助）/ #FFF0F2（浅底）
+ */
+
+page {
+  background: #F5F6FA;
+  font-size: 28rpx;
+  color: #1F2329;
+  font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue',
+    'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ========== 通用卡片 ========== */
+.card {
+  background: #FFFFFF;
+  border-radius: 24rpx;
+  padding: 32rpx;
+  margin: 24rpx;
+  box-shadow: 0 4rpx 20rpx rgba(31, 35, 41, 0.05);
+}
+
+/* ========== 通用按钮 ========== */
+.btn-primary {
+  background: #FF6B81;
+  color: #FFFFFF;
+  border-radius: 44rpx;
+  font-size: 32rpx;
+  font-weight: 600;
+  line-height: 88rpx;
+  height: 88rpx;
+  text-align: center;
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-primary::after {
+  border: none;
+}
+.btn-primary.btn-disabled {
+  background: #FFB3BF;
+}
+.btn-primary.btn-hover {
+  background: #F2556D;
+}
+
+.btn-outline {
+  background: #FFFFFF;
+  color: #FF6B81;
+  border: 2rpx solid #FF6B81;
+  border-radius: 44rpx;
+  font-size: 30rpx;
+  font-weight: 500;
+  line-height: 80rpx;
+  height: 80rpx;
+  text-align: center;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-outline::after {
+  border: none;
+}
+.btn-outline.btn-hover {
+  background: #FFF0F2;
+}
+
+.btn-danger {
+  background: #FFFFFF;
+  color: #F0483E;
+  border: 2rpx solid #F0483E;
+  border-radius: 44rpx;
+  font-size: 30rpx;
+  line-height: 80rpx;
+  height: 80rpx;
+  text-align: center;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.btn-danger::after {
+  border: none;
+}
+
+/* ========== 表单 ========== */
+.form-group {
+  margin-bottom: 32rpx;
+}
+.form-label {
+  display: block;
+  font-size: 28rpx;
+  font-weight: 600;
+  color: #1F2329;
+  margin-bottom: 16rpx;
+}
+.form-label .required {
+  color: #FF6B81;
+  margin-right: 4rpx;
+}
+.form-input {
+  width: 100%;
+  box-sizing: border-box;
+  height: 88rpx;
+  padding: 0 28rpx;
+  background: #F7F8FA;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  color: #1F2329;
+}
+.form-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 180rpx;
+  padding: 24rpx 28rpx;
+  background: #F7F8FA;
+  border-radius: 16rpx;
+  font-size: 28rpx;
+  color: #1F2329;
+}
+.form-picker {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 88rpx;
+  padding: 0 28rpx;
+  background: #F7F8FA;
+  border-radius: 16rpx;
+}
+.form-picker-value {
+  color: #1F2329;
+}
+.form-picker-value.placeholder {
+  color: #B8BEC6;
+}
+.picker-arrow {
+  color: #B8BEC6;
+  font-size: 24rpx;
+}
+
+/* ========== 状态标签 ========== */
+.status-tag {
+  display: inline-block;
+  padding: 6rpx 20rpx;
+  border-radius: 24rpx;
+  font-size: 24rpx;
+  font-weight: 500;
+  line-height: 1.4;
+}
+.status-tag.pending {
+  background: #FFF6E5;
+  color: #E6A23C;
+}
+.status-tag.approved {
+  background: #E8F8EF;
+  color: #07C160;
+}
+.status-tag.rejected {
+  background: #FDECEC;
+  color: #F0483E;
+}
+
+/* ========== 空状态 ========== */
+.empty-wrap {
+  padding: 120rpx 0;
+  text-align: center;
+}
+.empty-icon {
+  font-size: 96rpx;
+  display: block;
+  margin-bottom: 24rpx;
+}
+.empty-text {
+  color: #9AA0A6;
+  font-size: 28rpx;
+}
+
+/* ========== 页面底部留白 ========== */
+.page-bottom {
+  height: 40rpx;
+}

@@ -1,0 +1,121 @@
+<!-- pages/bill/bill.wxml —— 账单：情侣共享账本（Tab 页） -->
+<view class="page">
+
+  <!-- 顶部工具栏：导入/导出/模板 -->
+  <view class="toolbar">
+    <view class="toolbar-btn" bindtap="onDownloadTemplate">📄 模板</view>
+    <view class="toolbar-btn" bindtap="onImport">📥 导入</view>
+    <view class="toolbar-btn" bindtap="onExport">📤 导出</view>
+  </view>
+
+  <!-- 月份切换 + 筛选 -->
+  <view class="month-bar">
+    <view class="month-arrow" bindtap="onPreMonth">‹</view>
+    <view class="month-text">{{yearMonthText}}</view>
+    <view class="month-arrow" bindtap="onNextMonth">›</view>
+    <block wx:if="{{filterOn}}">
+      <view class="filter-clear" bindtap="onClearFilter">清除筛选</view>
+    </block>
+  </view>
+
+  <!-- 未绑定提示 -->
+  <view class="bind-tip" wx:if="{{notBound}}">
+    <text class="bind-tip-icon">💞</text>
+    <text class="bind-tip-text">绑定伴侣后，你们就能共用一本「情侣账本」啦</text>
+  </view>
+
+  <!-- 月度统计卡片 -->
+  <view class="stat-card" wx:if="{{!notBound}}">
+    <view class="stat-main">
+      <view class="stat-label">本期支出</view>
+      <view class="stat-expense">¥{{stats.expenseText}}</view>
+    </view>
+    <view class="stat-sub">
+      <view class="stat-item">
+        <text class="stat-item-label">收入</text>
+        <text class="stat-income">+¥{{stats.incomeText}}</text>
+      </view>
+      <view class="stat-divider"></view>
+      <view class="stat-item">
+        <text class="stat-item-label">结余</text>
+        <text class="stat-balance">{{stats.balanceText}}</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 统计维度切换（月/分类/人员） -->
+  <view class="dims" wx:if="{{!notBound}}">
+    <view class="dim-tab {{dim === 'month' ? 'active' : ''}}" bindtap="onDimChange" data-dim="month">按月</view>
+    <view class="dim-tab {{dim === 'category' ? 'active' : ''}}" bindtap="onDimChange" data-dim="category">按分类</view>
+    <view class="dim-tab {{dim === 'person' ? 'active' : ''}}" bindtap="onDimChange" data-dim="person">按人员</view>
+  </view>
+
+  <!-- 统计明细（按维度） -->
+  <view class="dim-panel" wx:if="{{dim !== 'month' && !notBound}}">
+    <view class="dim-row" wx:for="{{dimList}}" wx:key="key">
+      <text class="dim-name">{{item.name}}</text>
+      <view class="dim-track">
+        <view class="dim-fill" style="width: {{item.percent}}%"></view>
+      </view>
+      <text class="dim-percent">{{item.percent}}%</text>
+      <text class="dim-amount">¥{{item.amountText}}</text>
+    </view>
+  </view>
+
+  <!-- 筛选条 -->
+  <view class="filter-bar" wx:if="{{!notBound}}">
+    <view class="filter-chip {{filterType === 'all' ? 'active' : ''}}" bindtap="onFilterType" data-type="all">全部</view>
+    <view class="filter-chip {{filterType === 'expense' ? 'active' : ''}}" bindtap="onFilterType" data-type="expense">支出</view>
+    <view class="filter-chip {{filterType === 'income' ? 'active' : ''}}" bindtap="onFilterType" data-type="income">收入</view>
+    <view class="filter-chip {{filterPerson !== '' ? 'active' : ''}}" bindtap="onFilterPerson">人员:{{filterPersonText || '全部'}}</view>
+  </view>
+
+  <!-- 空状态 -->
+  <view class="empty" wx:if="{{!loading && filteredList.length === 0}}">
+    <view class="empty-icon">🧾</view>
+    <text class="empty-text">没有符合条件的账单</text>
+    <text class="empty-sub">点下方「记一笔」开始记录</text>
+  </view>
+
+  <!-- 账单列表（左滑操作） -->
+  <view class="group" wx:if="{{filteredList.length > 0}}">
+    <view class="group-list">
+      <view class="swipe-action" wx:for="{{filteredList}}" wx:key="id">
+        <!-- 背景操作按钮 -->
+        <view class="swipe-actions">
+          <view class="swipe-btn swipe-btn-edit" wx:if="{{item.mine}}"
+            bindtap="onSwipeEdit" data-id="{{item.id}}">编辑</view>
+          <view class="swipe-btn swipe-btn-del"
+            bindtap="onSwipeDelete" data-id="{{item.id}}">删除</view>
+        </view>
+        <!-- 内容层（触摸事件驱动滑动） -->
+        <view class="bill-item {{swipedId === item.id ? 'swiped' : ''}}"
+          data-id="{{item.id}}" data-mine="{{item.mine}}"
+          bindtouchstart="onSwipeStart" bindtouchmove="onSwipeMove" bindtouchend="onSwipeEnd">
+          <view class="bill-date-col">
+            <text class="bill-date">{{item.dateShort}}</text>
+          </view>
+          <view class="bill-info">
+            <view class="bill-top">
+              <text class="bill-matter">{{item.matter || '—'}}</text>
+              <text class="bill-cat">{{item.categoryName}}</text>
+            </view>
+            <view class="bill-sub" wx:if="{{item.note}}">{{item.note}}</view>
+            <view class="bill-creator">👤 {{item.creatorName}}</view>
+          </view>
+          <view class="bill-amount {{item.type === 'income' ? 'is-income' : 'is-expense'}}">
+            {{item.type === 'income' ? '+' : '-'}}¥{{item.amountText}}
+          </view>
+        </view>
+      </view>
+    </view>
+  </view>
+
+  <!-- 底部留白 -->
+  <view class="footer-space"></view>
+
+  <!-- 记一笔 -->
+  <view class="add-bar" bindtap="onAdd">
+    <view class="add-btn">＋ 记一笔</view>
+  </view>
+</view>

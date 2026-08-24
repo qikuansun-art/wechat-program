@@ -1,0 +1,9 @@
+{
+  "name": "addBill",
+  "version": "1.0.0",
+  "description": "记一笔账（情侣共享账本）",
+  "main": "index.js",
+  "dependencies": {
+    "wx-server-sdk": "~2.6.3"
+  }
+}

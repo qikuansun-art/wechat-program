@@ -1,0 +1,66 @@
+<!-- pages/mine/mine.wxml —— 我的：个人中心 -->
+<view class="page">
+
+  <!-- 用户信息卡片 -->
+  <view class="card user-card">
+    <button class="avatar-btn" open-type="chooseAvatar" bindchooseavatar="onChooseAvatar">
+      <image class="avatar" wx:if="{{userInfo.avatarUrl}}" src="{{userInfo.avatarUrl}}" mode="aspectFill" />
+      <view class="avatar avatar-default" wx:else>👤</view>
+      <view class="avatar-edit">换头像</view>
+    </button>
+
+    <view class="user-info">
+      <view class="nickname-row" wx:if="{{!editNickname}}">
+        <text class="nickname">{{userInfo.nickName || '未设置昵称'}}</text>
+        <text class="nickname-edit" bindtap="onEditNickname">修改</text>
+      </view>
+      <view class="nickname-row" wx:else>
+        <input class="nickname-input" value="{{nicknameDraft}}" bindinput="onNicknameInput" maxlength="20"
+          placeholder="请输入昵称" />
+        <text class="nickname-save" bindtap="onSaveNickname">保存</text>
+      </view>
+    </view>
+  </view>
+
+  <!-- 邀请码卡片（仅未绑定显示） -->
+  <view class="card code-card" wx:if="{{!bound}}" bindtap="onCopyCode">
+    <view class="code-label">我的邀请码</view>
+    <view class="code-row">
+      <text class="code-text">{{inviteCode || '--'}}</text>
+      <text class="code-tip">{{inviteCode ? '点我复制' : '加载中...'}}</text>
+    </view>
+  </view>
+
+  <!-- 绑定状态卡片 -->
+  <view class="card bind-card">
+    <view class="bind-title">关系绑定</view>
+
+    <block wx:if="{{bound}}">
+      <view class="bind-status">
+        <view class="bind-line">
+          <text class="bind-label">绑定对象</text>
+          <text class="bind-value">♥ {{partnerName}}</text>
+        </view>
+        <view class="bind-line">
+          <text class="bind-label">绑定时间</text>
+          <text class="bind-value">{{bindTimeText || '--'}}</text>
+        </view>
+      </view>
+      <view class="bind-actions">
+        <button class="btn-danger bind-btn" bindtap="onUnbind">解绑</button>
+      </view>
+      <view class="bind-tip">解绑后可重新绑定新的伴侣</view>
+    </block>
+
+    <block wx:else>
+      <view class="bind-empty">
+        <text class="bind-empty-icon">💞</text>
+        <text class="bind-empty-text">尚未绑定伴侣</text>
+      </view>
+      <button class="btn-primary" bindtap="goBind" hover-class="btn-hover">去绑定伴侣</button>
+      <view class="bind-tip">绑定后双方共享报备与审批通道，随时同步行踪</view>
+    </block>
+  </view>
+
+  <view class="page-bottom"></view>
+</view>
