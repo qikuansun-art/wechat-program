@@ -5,6 +5,10 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+const TEMPLATE_NEW_REPORT = '9Olki2zL-v7V_Nse9V0MNTWq2d8nlTIo6aW1YV1Gmvg';
+const NOTIFY_PAGE = 'pages/message/message';
+const MINIPROGRAM_STATE = 'developer';
+
 /** 简单格式化时间：Date / serverDate / 时间戳 → 'YYYY-MM-DD HH:mm' */
 function formatTime(value) {
   if (!value) return '';
@@ -14,34 +18,48 @@ function formatTime(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 给审批方推送「新报备」订阅消息（静默失败，但记录详细日志便于排查） */
-async function notifyPartner(partnerOpenid, reportData) {
+/** 最佳努力修正本地估算状态；该状态不参与发送授权。 */
+async function markSubscriptionEstimateConsumed(openid) {
   try {
-    const res = await cloud.callFunction({
-      name: 'sendNotify',
-      data: {
-        type: 'new_report',
-        toOpenid: partnerOpenid,
-        page: 'pages/message/message',
-        // ⚠️ 字段编号需与你申请的模板关键词一一对应（thing/time/name 为常见类型）
-        data: {
-          thing2: { value: (reportData.reason || '发起报备').slice(0, 20) },
-          thing25: { value: (reportData.reason || '').slice(0, 20) },
-          time26: { value: formatTime(reportData.createdAt) }
-        }
-      }
-    });
-    const result = (res && res.result) || {};
-    if (!result.success) {
-      // 记录详细原因：额度不足 / 模板未配置 / 其他
-      console.warn('[createReport] 通知审批方未成功:', result.msg || '未知原因',
-        'partnerOpenid:', partnerOpenid, 'count:', result.count);
-    } else {
-      console.log('[createReport] 通知审批方成功, msgid:', result.msgid);
+    const subs = db.collection('subscriptions');
+    const res = await subs.where({ openid, tmplId: TEMPLATE_NEW_REPORT }).get();
+    if (res.data.length > 0) {
+      await subs.doc(res.data[0]._id).update({
+        data: { count: 0, updatedAt: db.serverDate() }
+      });
     }
   } catch (err) {
-    console.error('[createReport] 通知审批方异常:', err.errMsg || err.message || err,
-      'partnerOpenid:', partnerOpenid);
+    console.warn('[createReport] 修正订阅估算状态失败（忽略）:', err.errCode || err.errMsg || err.message || '未知错误');
+  }
+}
+
+/** 给审批方推送「新报备」订阅消息。所有参数均由服务端真实业务数据生成。 */
+async function notifyPartner(partnerOpenid, reportData) {
+  try {
+    const sendRes = await cloud.openapi.subscribeMessage.send({
+      touser: partnerOpenid,
+      templateId: TEMPLATE_NEW_REPORT,
+      page: NOTIFY_PAGE,
+      miniprogramState: MINIPROGRAM_STATE,
+      lang: 'zh_CN',
+      // ⚠️ 字段编号需与你申请的模板关键词一一对应。
+      data: {
+        thing2: { value: `${reportData.creatorName || '伴侣'}要去${reportData.location}`.slice(0, 20) },
+        thing25: { value: (reportData.reason || '发起报备').slice(0, 20) },
+        time26: { value: formatTime(reportData.createdAt) }
+      }
+    });
+    console.log('[createReport] 通知审批方成功, receiver:', partnerOpenid.slice(-6) + '...',
+      'msgid:', sendRes.msgid || '');
+    await markSubscriptionEstimateConsumed(partnerOpenid);
+    return { success: true };
+  } catch (err) {
+    console.warn('[createReport] 通知审批方失败（不影响报备）: receiver:', partnerOpenid.slice(-6) + '...',
+      'errCode:', err.errCode || '', 'errMsg:', err.errMsg || err.message || '未知错误');
+    if (Number(err.errCode || err.errcode) === 43101) {
+      await markSubscriptionEstimateConsumed(partnerOpenid);
+    }
+    return { success: false };
   }
 }
 
@@ -93,11 +111,13 @@ exports.main = async (event, context) => {
 
     const addRes = await reports.add({ data: report });
 
-    // 查审批方 openid，推送订阅消息（异步等待，失败不影响返回）
+    // 查真实审批方并推送。接收人、页面和内容均不接受客户端指定。
     try {
       const partnerRes = await users.doc(me.partnerId).get();
-      if (partnerRes.data) {
+      if (partnerRes.data && partnerRes.data.partnerId === me._id) {
         await notifyPartner(partnerRes.data.openid, Object.assign({}, report, { _id: addRes._id, createdAt: new Date() }));
+      } else {
+        console.warn('[createReport] 伴侣关系不一致，跳过通知, partnerId:', String(me.partnerId).slice(-6) + '...');
       }
     } catch (notifyErr) {
       console.error('[createReport] 查询审批方失败（忽略）', notifyErr);

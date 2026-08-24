@@ -5,6 +5,10 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+const TEMPLATE_APPROVE_RESULT = 'nrteb3ujtZBTIHtyABGP0FGP3Dy19PxRelc0IFFnaB8';
+const NOTIFY_PAGE = 'pages/record/record';
+const MINIPROGRAM_STATE = 'developer';
+
 class BusinessError extends Error {
   constructor(message) {
     super(message);
@@ -21,39 +25,54 @@ function formatTime(value) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
-/** 给发起方推送「审批结果」订阅消息（静默失败，但记录详细日志便于排查） */
+/** 最佳努力修正本地估算状态；该状态不参与发送授权。 */
+async function markSubscriptionEstimateConsumed(openid) {
+  try {
+    const subs = db.collection('subscriptions');
+    const res = await subs.where({ openid, tmplId: TEMPLATE_APPROVE_RESULT }).get();
+    if (res.data.length > 0) {
+      await subs.doc(res.data[0]._id).update({
+        data: { count: 0, updatedAt: db.serverDate() }
+      });
+    }
+  } catch (err) {
+    console.warn('[approveReport] 修正订阅估算状态失败（忽略）:', err.errCode || err.errMsg || err.message || '未知错误');
+  }
+}
+
+/** 给发起方推送「审批结果」。接收人、页面和内容均来自已提交的真实审批。 */
 async function notifyCreator(creatorOpenid, reportData, approveAction, approveReason) {
   try {
     // 审批结果文案：已批准 / 已驳回（附理由）
     const resultText = approveAction === 'approve'
       ? '已批准'
       : `已驳回：${(approveReason || '').slice(0, 12)}`;
-    const res = await cloud.callFunction({
-      name: 'sendNotify',
+    const sendRes = await cloud.openapi.subscribeMessage.send({
+      touser: creatorOpenid,
+      templateId: TEMPLATE_APPROVE_RESULT,
+      page: NOTIFY_PAGE,
+      miniprogramState: MINIPROGRAM_STATE,
+      lang: 'zh_CN',
+      // ⚠️ 字段编号需与你申请的模板关键词一一对应。
       data: {
-        type: 'approve_result',
-        toOpenid: creatorOpenid,
-        page: 'pages/record/record',
-        // ⚠️ 字段编号需与你申请的模板关键词一一对应
-        data: {
-          thing13: { value: (reportData.reason || '报备审批').slice(0, 20) },
-          time2: { value: formatTime(reportData.createdAt) },
-          phrase3: { value: resultText.slice(0, 20) },
-          thing17: { value: (approveAction === 'reject' ? (approveReason || '无') : '无').slice(0, 20) },
-          thing18: { value: '查看详情了解更多' }
-        }
+        thing13: { value: (reportData.reason || '报备审批').slice(0, 20) },
+        time2: { value: formatTime(reportData.createdAt) },
+        phrase3: { value: resultText.slice(0, 20) },
+        thing17: { value: (approveAction === 'reject' ? (approveReason || '无') : '无').slice(0, 20) },
+        thing18: { value: '查看详情了解更多' }
       }
     });
-    const result = (res && res.result) || {};
-    if (!result.success) {
-      console.warn('[approveReport] 通知发起方未成功:', result.msg || '未知原因',
-        'creatorOpenid:', creatorOpenid, 'count:', result.count);
-    } else {
-      console.log('[approveReport] 通知发起方成功, msgid:', result.msgid);
-    }
+    console.log('[approveReport] 通知发起方成功, receiver:', creatorOpenid.slice(-6) + '...',
+      'msgid:', sendRes.msgid || '');
+    await markSubscriptionEstimateConsumed(creatorOpenid);
+    return { success: true };
   } catch (err) {
-    console.error('[approveReport] 通知发起方异常:', err.errMsg || err.message || err,
-      'creatorOpenid:', creatorOpenid);
+    console.warn('[approveReport] 通知发起方失败（不影响审批）: receiver:', creatorOpenid.slice(-6) + '...',
+      'errCode:', err.errCode || '', 'errMsg:', err.errMsg || err.message || '未知错误');
+    if (Number(err.errCode || err.errcode) === 43101) {
+      await markSubscriptionEstimateConsumed(creatorOpenid);
+    }
+    return { success: false };
   }
 }
 

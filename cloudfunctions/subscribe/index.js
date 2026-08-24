@@ -1,9 +1,8 @@
-// 云函数：subscribe —— 记录用户订阅授权
-// 前端 wx.requestSubscribeMessage 授权成功后调用一次，额度 +1
+// 云函数：subscribe —— 记录客户端最近一次报告的订阅接受状态
+// 注意：客户端回报不可作为微信真实授权凭证，count 仅为非可信 UX/观测提示。
 const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
-const _ = db.command;
 
 // 与 sendNotify / utils/config.js 保持一致
 const TEMPLATES = {
@@ -25,9 +24,10 @@ exports.main = async (event, context) => {
     const exist = await subs.where({ openid: OPENID, tmplId }).get();
 
     if (exist.data.length > 0) {
-      // 已有记录：额度 +1
+      // 固定为 1，防止客户端重复调用无限制造垃圾计数。
+      // 该值不参与任何通知发送授权判断。
       await subs.doc(exist.data[0]._id).update({
-        data: { count: _.inc(1), updatedAt: db.serverDate() }
+        data: { type, count: 1, updatedAt: db.serverDate() }
       });
     } else {
       // 首次授权：新建记录
@@ -42,7 +42,7 @@ exports.main = async (event, context) => {
         }
       });
     }
-    return { success: true };
+    return { success: true, count: 1 };
   } catch (err) {
     console.error('[subscribe] 记录失败', err);
     return { success: false, msg: '记录授权失败' };

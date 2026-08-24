@@ -123,8 +123,13 @@ function makeCollection(name) {
   return coll;
 }
 
-// 记录云函数间调用（sendNotify）
+const TEMPLATE_NEW_REPORT = '9Olki2zL-v7V_Nse9V0MNTWq2d8nlTIo6aW1YV1Gmvg';
+const TEMPLATE_APPROVE_RESULT = 'nrteb3ujtZBTIHtyABGP0FGP3Dy19PxRelc0IFFnaB8';
+
+// 分别记录云函数间调用和真实微信订阅消息 API 尝试。
+const cloudFunctionCalls = [];
 const notifyCalls = [];
+let notifyError = null;
 
 const mockCloud = {
   DYNAMIC_CURRENT_ENV: Symbol('env'),
@@ -178,10 +183,18 @@ const mockCloud = {
     return database;
   },
   callFunction: async ({ name, data }) => {
-    notifyCalls.push({ name, data });
+    cloudFunctionCalls.push({ name, data });
     return { result: { success: true } };
   },
-  openapi: { subscribeMessage: { send: async () => ({ msgid: 'mock' }) } }
+  openapi: {
+    subscribeMessage: {
+      send: async (options) => {
+        notifyCalls.push(cloneValue(options));
+        if (notifyError) throw notifyError;
+        return { msgid: 'mock' };
+      }
+    }
+  }
 };
 
 // 劫持 require('wx-server-sdk') → mockCloud
@@ -265,17 +278,64 @@ function assert(cond, msg) {
   const rebind = await callAs(A, 'bind', { code: 'XYZ234' });
   assert(!rebind.success, '已绑定再绑定：被拒绝');
 
+  // ---------- 通知安全边界 ----------
+  console.log('\n== 通知安全边界 ==');
+  const sendsBeforeDisabledCalls = notifyCalls.length;
+  const disabledPlain = await callAs(C, 'sendNotify', {});
+  const disabledReceiver = await callAs(C, 'sendNotify', { toOpenid: A, type: 'new_report' });
+  const disabledPayload = await callAs(C, 'sendNotify', {
+    toOpenid: B,
+    type: 'approve_result',
+    page: 'pages/fake/fake',
+    data: { thing13: { value: '伪造消息' } }
+  });
+  assert(!disabledPlain.success && disabledPlain.msg === '接口已停用', '直接调用 sendNotify：明确拒绝');
+  assert(!disabledReceiver.success && notifyCalls.length === sendsBeforeDisabledCalls,
+    'sendNotify 伪造 toOpenid：不会调用微信 API');
+  assert(!disabledPayload.success && notifyCalls.length === sendsBeforeDisabledCalls,
+    'sendNotify 伪造 data/page：不会调用微信 API');
+
+  for (let i = 0; i < 10; i++) {
+    await callAs(A, 'subscribe', {
+      type: 'approve_result', openid: B, tmplId: 'fake-template', count: 999
+    });
+  }
+  const aSubscription = store.subscriptions.find((s) => s.openid === A && s.tmplId === TEMPLATE_APPROVE_RESULT);
+  assert(store.subscriptions.filter((s) => s.openid === A && s.tmplId === TEMPLATE_APPROVE_RESULT).length === 1 &&
+    aSubscription.count === 1, '重复调用 subscribe：估算 count 固定封顶为 1');
+  assert(!store.subscriptions.some((s) => s.openid === B || s.tmplId === 'fake-template' || s.count === 999),
+    'subscribe：忽略客户端伪造的 openid/tmplId/count');
+
   // ---------- 发起报备 ----------
   console.log('\n== 发起报备 ==');
   const noLoc = await callAs(A, 'createReport', { reason: 'x', returnTime: '今晚10点' });
   assert(!noLoc.success, '缺外出地点：被拒绝');
+  usersA.nickName = '真实昵称A';
+  store.subscriptions.push({
+    _id: nextId(), openid: B, tmplId: TEMPLATE_NEW_REPORT, type: 'new_report', count: 0
+  });
+  const sendsBeforeReport = notifyCalls.length;
   const reportRes = await callAs(A, 'createReport', {
     location: '万达影城', companions: '闺蜜', returnTime: '22:00', reason: '看电影'
   });
   assert(reportRes.success, 'A 发起报备：成功');
   const report = store.reports.find((r) => r._id === reportRes.id);
   assert(report && report.status === 'pending' && report.partnerId === usersB._id, '报备落库：待审批 + 审批人指向 B');
-  assert(notifyCalls.some((n) => n.name === 'sendNotify' && n.data.type === 'new_report'), '新报备：触发给 B 的订阅消息');
+  const newReportNotify = notifyCalls[notifyCalls.length - 1];
+  assert(notifyCalls.length === sendsBeforeReport + 1, 'subscriptions.count=0：真实报备仍尝试调用微信 API');
+  assert(newReportNotify.touser === B && newReportNotify.templateId === TEMPLATE_NEW_REPORT &&
+    newReportNotify.page === 'pages/message/message', '新报备：接收人、模板和页面由真实伴侣关系固定生成');
+  assert(newReportNotify.data.thing2.value === '真实昵称A要去万达影城' &&
+    newReportNotify.data.thing25.value === report.reason, '新报备：通知内容来自真实用户和刚创建的 report');
+  assert(!cloudFunctionCalls.some((c) => c.name === 'sendNotify'), 'createReport 不再调用通用 sendNotify');
+
+  notifyError = Object.assign(new Error('user refuse to accept the msg'), { errCode: 43101 });
+  const noAuthReport = await callAs(A, 'createReport', {
+    location: '无授权测试', returnTime: '23:00', reason: '微信无额度'
+  });
+  notifyError = null;
+  assert(noAuthReport.success && store.reports.some((r) => r._id === noAuthReport.id),
+    '微信无有效授权：报备仍创建成功且不回滚');
 
   // ---------- 审批（含权限） ----------
   console.log('\n== 审批 ==');
@@ -287,24 +347,55 @@ function assert(cond, msg) {
   assert(rejectOk.success, 'B 驳回（带理由）：成功');
   const rejectedReport = store.reports.find((r) => r._id === reportRes.id);
   assert(rejectedReport.status === 'rejected' && rejectedReport.rejectReason === '太晚了不安全', '驳回状态与理由落库正确');
-  assert(notifyCalls.some((n) => n.data.type === 'approve_result' && n.data.toOpenid === A), '审批结果：触发给 A 的订阅消息');
+  const approvalNotify = notifyCalls[notifyCalls.length - 1];
+  assert(approvalNotify.touser === A && approvalNotify.templateId === TEMPLATE_APPROVE_RESULT &&
+    approvalNotify.page === 'pages/record/record', '审批结果：接收人、模板和页面由真实 report 固定生成');
+  assert(approvalNotify.data.phrase3.value.indexOf('已驳回') === 0 &&
+    approvalNotify.data.thing17.value === '太晚了不安全', '审批结果：通知内容来自真实 report 和本次审批结果');
   const again = await callAs(B, 'approveReport', { reportId: reportRes.id, action: 'approve' });
   assert(!again.success && again.msg.indexOf('已被处理') >= 0, '同一报备重复审批：返回明确业务结果');
 
   const concurrentReport = await callAs(A, 'createReport', {
     location: '并发测试', returnTime: '21:00', reason: '验证原子审批'
   });
-  const notifyBeforeConcurrentApprove = notifyCalls.filter((n) => n.data.type === 'approve_result').length;
+  const notifyBeforeConcurrentApprove = notifyCalls.filter((n) => n.templateId === TEMPLATE_APPROVE_RESULT).length;
   const concurrentApprove = await Promise.all([
     callAs(B, 'approveReport', { reportId: concurrentReport.id, action: 'approve' }),
     callAs(B, 'approveReport', { reportId: concurrentReport.id, action: 'reject', reason: '并发驳回' })
   ]);
-  const notifyAfterConcurrentApprove = notifyCalls.filter((n) => n.data.type === 'approve_result').length;
+  const notifyAfterConcurrentApprove = notifyCalls.filter((n) => n.templateId === TEMPLATE_APPROVE_RESULT).length;
   assert(concurrentApprove.filter((r) => r.success).length === 1, '两个并发审批请求：只有一个成功');
   assert(concurrentApprove.filter((r) => !r.success && r.msg.indexOf('已被处理') >= 0).length === 1,
     '并发审批失败方：返回已处理的业务结果');
   assert(notifyAfterConcurrentApprove - notifyBeforeConcurrentApprove === 1,
     '并发审批：只有真正更新状态的请求发送通知');
+
+  const apiErrorReport = await callAs(A, 'createReport', {
+    location: '审批通知异常', returnTime: '19:00', reason: '验证失败隔离'
+  });
+  notifyError = Object.assign(new Error('mock WeChat API unavailable'), { errCode: 50001 });
+  const approveWithNotifyError = await callAs(B, 'approveReport', {
+    reportId: apiErrorReport.id, action: 'approve'
+  });
+  notifyError = null;
+  const approvedDespiteNotifyError = store.reports.find((r) => r._id === apiErrorReport.id);
+  assert(approveWithNotifyError.success && approvedDespiteNotifyError.status === 'approved',
+    '微信发送 API 报错：审批仍成功且事务结果不回滚');
+  assert(!cloudFunctionCalls.some((c) => c.name === 'sendNotify'), 'approveReport 不再调用通用 sendNotify');
+
+  const noAuthApprovalReport = await callAs(A, 'createReport', {
+    location: '审批无授权', returnTime: '18:00', reason: '验证微信无额度'
+  });
+  notifyError = Object.assign(new Error('user refuse to accept the msg'), { errCode: 43101 });
+  const noAuthApproval = await callAs(B, 'approveReport', {
+    reportId: noAuthApprovalReport.id, action: 'reject', reason: '无授权也要完成审批'
+  });
+  notifyError = null;
+  assert(noAuthApproval.success &&
+    store.reports.find((r) => r._id === noAuthApprovalReport.id).status === 'rejected',
+    '微信无有效授权：审批仍成功且不回滚');
+  assert(store.subscriptions.find((s) => s.openid === A && s.tmplId === TEMPLATE_APPROVE_RESULT).count === 0,
+    '微信明确返回无有效授权：本地非可信估算值修正为 0');
 
   // 再走一条批准流程
   const r2 = await callAs(B, 'createReport', { location: '公司团建', returnTime: '20:00', reason: '聚餐' });
