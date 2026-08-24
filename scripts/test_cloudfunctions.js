@@ -11,6 +11,29 @@ const store = { users: [], reports: [], bills: [], subscriptions: [] };
 let autoId = 0;
 const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
+let transactionTail = Promise.resolve();
+let transactionFailAfterWrites = null;
+
+function cloneValue(value) {
+  if (value instanceof Date) return new Date(value.getTime());
+  if (Array.isArray(value)) return value.map(cloneValue);
+  if (value && typeof value === 'object') {
+    const out = {};
+    Object.keys(value).forEach((key) => { out[key] = cloneValue(value[key]); });
+    return out;
+  }
+  return value;
+}
+
+function snapshotStore() {
+  return cloneValue(store);
+}
+
+function restoreStore(snapshot) {
+  Object.keys(store).forEach((name) => {
+    store[name].splice(0, store[name].length, ...snapshot[name]);
+  });
+}
 
 // 深度相等判断（简化版）
 function deepEqual(a, b) {
@@ -108,7 +131,7 @@ const mockCloud = {
   init() {},
   getWXContext() { return { OPENID: currentOpenid }; },
   database() {
-    return {
+    const database = {
       collection: makeCollection,
       serverDate() { return new Date('2026-08-19T10:00:00+08:00'); },
       command: {
@@ -117,6 +140,42 @@ const mockCloud = {
       },
       RegExp({ regexp }) { return { __regex: regexp }; }
     };
+    database.runTransaction = async (callback) => {
+      const execute = async () => {
+        const snapshot = snapshotStore();
+        let writeCount = 0;
+        const transaction = {
+          collection(name) {
+            const collection = makeCollection(name);
+            const originalDoc = collection.doc.bind(collection);
+            collection.doc = (id) => {
+              const ref = originalDoc(id);
+              const originalUpdate = ref.update;
+              ref.update = async (arg) => {
+                writeCount++;
+                if (transactionFailAfterWrites !== null && writeCount > transactionFailAfterWrites) {
+                  throw new Error('mock transaction write failure');
+                }
+                return originalUpdate(arg);
+              };
+              return ref;
+            };
+            return collection;
+          }
+        };
+        try {
+          const result = await callback(transaction);
+          return { result, errMsg: 'runTransaction:ok' };
+        } catch (err) {
+          restoreStore(snapshot);
+          throw err;
+        }
+      };
+      const result = transactionTail.then(execute, execute);
+      transactionTail = result.catch(() => {});
+      return result;
+    };
+    return database;
   },
   callFunction: async ({ name, data }) => {
     notifyCalls.push({ name, data });
@@ -152,6 +211,8 @@ function assert(cond, msg) {
 
 (async () => {
   const A = 'openid-AAA', B = 'openid-BBB', C = 'openid-CCC';
+  const D = 'openid-DDD', E = 'openid-EEE', F = 'openid-FFF';
+  const G = 'openid-GGG', H = 'openid-HHH';
 
   // ---------- 登录 ----------
   console.log('\n== 登录 ==');
@@ -162,6 +223,11 @@ function assert(cond, msg) {
   const loginB = await callAs(B, 'login');
   assert(loginB.success && loginB.userInfo.bindCode !== loginA1.userInfo.bindCode, 'B 登录：邀请码与 A 不同');
   await callAs(C, 'login');
+  const loginD = await callAs(D, 'login');
+  const loginE = await callAs(E, 'login');
+  const loginF = await callAs(F, 'login');
+  const loginG = await callAs(G, 'login');
+  const loginH = await callAs(H, 'login');
 
   // ---------- 绑定 ----------
   console.log('\n== 绑定 ==');
@@ -169,6 +235,28 @@ function assert(cond, msg) {
   assert(!badFmt.success, '邀请码格式非法：被拒绝');
   const selfBind = await callAs(A, 'bind', { code: loginA1.userInfo.bindCode });
   assert(!selfBind.success, '绑定自己：被拒绝');
+
+  const concurrentBind = await Promise.all([
+    callAs(D, 'bind', { code: loginF.userInfo.bindCode }),
+    callAs(E, 'bind', { code: loginF.userInfo.bindCode })
+  ]);
+  const bindWinners = concurrentBind.filter((r) => r.success);
+  const freshD = store.users.find((u) => u.openid === D);
+  const freshE = store.users.find((u) => u.openid === E);
+  const freshF = store.users.find((u) => u.openid === F);
+  const winner = freshD.partnerId ? freshD : freshE;
+  const loser = freshD.partnerId ? freshE : freshD;
+  assert(bindWinners.length === 1, 'D、E 同时绑定 F：只有一个请求成功');
+  assert(freshF.partnerId === winner._id && !loser.partnerId, '并发抢绑后关系保持唯一且双向一致');
+
+  transactionFailAfterWrites = 1;
+  const failedBind = await callAs(G, 'bind', { code: loginH.userInfo.bindCode });
+  transactionFailAfterWrites = null;
+  const freshG = store.users.find((u) => u.openid === G);
+  const freshH = store.users.find((u) => u.openid === H);
+  assert(!failedBind.success, '绑定事务第二次写入失败：请求返回失败');
+  assert(!freshG.partnerId && !freshH.partnerId, '绑定事务中途失败：双方写入整体回滚');
+
   const okBind = await callAs(A, 'bind', { code: loginB.userInfo.bindCode });
   assert(okBind.success && okBind.partner.nickName, 'A 用 B 的邀请码：绑定成功');
   const usersA = store.users.find((u) => u.openid === A);
@@ -197,10 +285,26 @@ function assert(cond, msg) {
   assert(!rejectNoReason.success, '驳回不填理由：被拒绝');
   const rejectOk = await callAs(B, 'approveReport', { reportId: reportRes.id, action: 'reject', reason: '太晚了不安全' });
   assert(rejectOk.success, 'B 驳回（带理由）：成功');
-  assert(report.status === 'rejected' && report.rejectReason === '太晚了不安全', '驳回状态与理由落库正确');
+  const rejectedReport = store.reports.find((r) => r._id === reportRes.id);
+  assert(rejectedReport.status === 'rejected' && rejectedReport.rejectReason === '太晚了不安全', '驳回状态与理由落库正确');
   assert(notifyCalls.some((n) => n.data.type === 'approve_result' && n.data.toOpenid === A), '审批结果：触发给 A 的订阅消息');
   const again = await callAs(B, 'approveReport', { reportId: reportRes.id, action: 'approve' });
-  assert(!again.success, '重复审批：被拒绝');
+  assert(!again.success && again.msg.indexOf('已被处理') >= 0, '同一报备重复审批：返回明确业务结果');
+
+  const concurrentReport = await callAs(A, 'createReport', {
+    location: '并发测试', returnTime: '21:00', reason: '验证原子审批'
+  });
+  const notifyBeforeConcurrentApprove = notifyCalls.filter((n) => n.data.type === 'approve_result').length;
+  const concurrentApprove = await Promise.all([
+    callAs(B, 'approveReport', { reportId: concurrentReport.id, action: 'approve' }),
+    callAs(B, 'approveReport', { reportId: concurrentReport.id, action: 'reject', reason: '并发驳回' })
+  ]);
+  const notifyAfterConcurrentApprove = notifyCalls.filter((n) => n.data.type === 'approve_result').length;
+  assert(concurrentApprove.filter((r) => r.success).length === 1, '两个并发审批请求：只有一个成功');
+  assert(concurrentApprove.filter((r) => !r.success && r.msg.indexOf('已被处理') >= 0).length === 1,
+    '并发审批失败方：返回已处理的业务结果');
+  assert(notifyAfterConcurrentApprove - notifyBeforeConcurrentApprove === 1,
+    '并发审批：只有真正更新状态的请求发送通知');
 
   // 再走一条批准流程
   const r2 = await callAs(B, 'createReport', { location: '公司团建', returnTime: '20:00', reason: '聚餐' });
@@ -238,6 +342,23 @@ function assert(cond, msg) {
   assert(delOwn.success, 'B 删自己记的账：成功');
   const billsAfter = await callAs(A, 'getBills', { yearMonth: '2026-08' });
   assert(billsAfter.list.length === 1, '删除后账本只剩 1 笔');
+
+  // ---------- 解绑事务 ----------
+  console.log('\n== 解绑事务 ==');
+  const abnormalC = store.users.find((u) => u.openid === C);
+  const beforeAbnormalBPartner = store.users.find((u) => u.openid === B).partnerId;
+  abnormalC.partnerId = store.users.find((u) => u.openid === B)._id;
+  abnormalC.partnerName = '异常关系';
+  const repairUnbind = await callAs(C, 'unbind');
+  const afterAbnormalBPartner = store.users.find((u) => u.openid === B).partnerId;
+  assert(repairUnbind.success && repairUnbind.repaired, '关系异常时解绑：安全清理当前用户');
+  assert(!abnormalC.partnerId && afterAbnormalBPartner === beforeAbnormalBPartner,
+    '关系异常时解绑：不误解绑对方的有效关系');
+
+  const normalUnbind = await callAs(A, 'unbind');
+  assert(normalUnbind.success, '正常双向解绑：请求成功');
+  assert(!store.users.find((u) => u.openid === A).partnerId && !store.users.find((u) => u.openid === B).partnerId,
+    '正常双向解绑：双方关系同时清空');
 
   // ---------- 汇总 ----------
   console.log('\n================ 测试结果 ================');

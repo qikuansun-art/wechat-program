@@ -5,6 +5,13 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+class BusinessError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'BusinessError';
+  }
+}
+
 /** 简单格式化时间：Date / serverDate / 时间戳 → 'YYYY-MM-DD HH:mm' */
 function formatTime(value) {
   if (!value) return '';
@@ -66,7 +73,6 @@ exports.main = async (event, context) => {
 
   try {
     const users = db.collection('users');
-    const reports = db.collection('reports');
 
     const meRes = await users.where({ openid: OPENID }).get();
     if (meRes.data.length === 0) {
@@ -74,46 +80,50 @@ exports.main = async (event, context) => {
     }
     const me = meRes.data[0];
 
-    // 读取报备
-    const reportRes = await reports.doc(reportId).get().catch(() => null);
-    if (!reportRes || !reportRes.data) {
-      return { success: false, msg: '报备不存在' };
-    }
-    const report = reportRes.data;
+    // 在事务中重新读取并更新报备。并发事务发生写冲突时，云数据库会重试；
+    // 重试后的请求会读到非 pending 状态，因此最多只有一个请求能够成功。
+    const txRes = await db.runTransaction(async (transaction) => {
+      const reportRef = transaction.collection('reports').doc(reportId);
+      let reportRes;
+      try {
+        reportRes = await reportRef.get();
+      } catch (err) {
+        throw new BusinessError('报备不存在');
+      }
+      if (!reportRes || !reportRes.data) {
+        throw new BusinessError('报备不存在');
+      }
+      const report = reportRes.data;
 
-    // 权限校验：只有审批人（partnerId 指向我）能审批
-    if (report.partnerId !== me._id) {
-      return { success: false, msg: '无权操作此报备' };
-    }
-    // 状态校验：不能重复审批
-    if (report.status !== 'pending') {
-      return { success: false, msg: '该报备已处理，请勿重复操作' };
-    }
+      if (report.partnerId !== me._id) {
+        throw new BusinessError('无权操作此报备');
+      }
+      if (report.status !== 'pending') {
+        throw new BusinessError('该报备已被处理，请刷新后查看最新结果');
+      }
 
-    if (action === 'approve') {
-      await reports.doc(reportId).update({
-        data: {
-          status: 'approved',
-          processedAt: db.serverDate(),
-          processedByName: me.nickName || '伴侣'
-        }
-      });
-    } else {
-      await reports.doc(reportId).update({
-        data: {
-          status: 'rejected',
-          rejectReason: reason.slice(0, 100),
-          processedAt: db.serverDate(),
-          processedByName: me.nickName || '伴侣'
-        }
-      });
-    }
+      const updateData = {
+        status: action === 'approve' ? 'approved' : 'rejected',
+        processedAt: db.serverDate(),
+        processedByName: me.nickName || '伴侣'
+      };
+      if (action === 'reject') {
+        updateData.rejectReason = reason.slice(0, 100);
+      }
+      await reportRef.update({ data: updateData });
+      return { report };
+    });
 
-    // 通知发起方（report.openid 即发起方 openid）
+    const report = txRes.result.report;
+
+    // 事务成功提交后才通知发起方，失败或重复请求不会发送通知。
     await notifyCreator(report.openid, report, action, reason);
 
     return { success: true };
   } catch (err) {
+    if (err && err.name === 'BusinessError') {
+      return { success: false, msg: err.message };
+    }
     console.error('[approveReport] 失败', err);
     return { success: false, msg: '操作失败，请重试' };
   }

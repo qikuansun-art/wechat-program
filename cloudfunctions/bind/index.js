@@ -4,6 +4,13 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+class BusinessError extends Error {
+  constructor(message) {
+    super(message);
+    this.name = 'BusinessError';
+  }
+}
+
 exports.main = async (event, context) => {
   const { OPENID } = cloud.getWXContext();
   const code = String(event.code || '').toUpperCase().trim();
@@ -37,31 +44,66 @@ exports.main = async (event, context) => {
       return { success: false, msg: '对方已绑定伴侣' };
     }
 
-    // 3. 双向绑定
-    await users.doc(me._id).update({
-      data: {
-        partnerId: partner._id,
-        partnerName: partner.nickName || '伴侣',
-        bindTime: db.serverDate()
+    // 3. 在事务内重新读取双方并完成双向绑定。
+    // 事务冲突时云数据库会自动重试，防止多人同时抢绑同一个用户。
+    const txRes = await db.runTransaction(async (transaction) => {
+      const meRef = transaction.collection('users').doc(me._id);
+      const partnerRef = transaction.collection('users').doc(partner._id);
+      const [freshMeRes, freshPartnerRes] = await Promise.all([
+        meRef.get(),
+        partnerRef.get()
+      ]);
+      const freshMe = freshMeRes && freshMeRes.data;
+      const freshPartner = freshPartnerRes && freshPartnerRes.data;
+
+      if (!freshMe || freshMe.openid !== OPENID) {
+        throw new BusinessError('当前用户状态异常，请重新登录');
       }
-    });
-    await users.doc(partner._id).update({
-      data: {
-        partnerId: me._id,
-        partnerName: me.nickName || '伴侣',
-        bindTime: db.serverDate()
+      if (!freshPartner || freshPartner.bindCode !== code) {
+        throw new BusinessError('邀请码已失效，请重新获取');
       }
+      if (freshMe._id === freshPartner._id || freshPartner.openid === OPENID) {
+        throw new BusinessError('不能绑定自己哦');
+      }
+      if (freshMe.partnerId) {
+        throw new BusinessError('你已绑定伴侣，请先解绑');
+      }
+      if (freshPartner.partnerId) {
+        throw new BusinessError('对方已绑定伴侣');
+      }
+
+      await meRef.update({
+        data: {
+          partnerId: freshPartner._id,
+          partnerName: freshPartner.nickName || '伴侣',
+          bindTime: db.serverDate()
+        }
+      });
+      await partnerRef.update({
+        data: {
+          partnerId: freshMe._id,
+          partnerName: freshMe.nickName || '伴侣',
+          bindTime: db.serverDate()
+        }
+      });
+
+      return { partner: freshPartner };
     });
+
+    const boundPartner = txRes.result.partner;
 
     return {
       success: true,
       partner: {
-        id: partner._id,
-        nickName: partner.nickName || '伴侣',
-        avatarUrl: partner.avatarUrl || ''
+        id: boundPartner._id,
+        nickName: boundPartner.nickName || '伴侣',
+        avatarUrl: boundPartner.avatarUrl || ''
       }
     };
   } catch (err) {
+    if (err && err.name === 'BusinessError') {
+      return { success: false, msg: err.message };
+    }
     console.error('[bind] 失败', err);
     return { success: false, msg: '绑定失败，请重试' };
   }
