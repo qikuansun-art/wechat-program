@@ -7,7 +7,7 @@ const db = cloud.database();
 
 const TEMPLATE_APPROVE_RESULT = 'nrteb3ujtZBTIHtyABGP0FGP3Dy19PxRelc0IFFnaB8';
 const NOTIFY_PAGE = 'pages/record/record';
-const MINIPROGRAM_STATE = 'developer';
+const MINIPROGRAM_STATE = 'trial';
 
 class BusinessError extends Error {
   constructor(message) {

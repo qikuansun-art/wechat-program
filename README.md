@@ -249,7 +249,7 @@ node scripts/test_cloudfunctions.js
 - 确认 `utils/config.js` 和 `cloudfunctions/sendNotify/index.js` 里的模板 ID 都已替换成真实 ID（不是「请替换」占位符）
 - 确认 `subscriptions` 集合已创建且权限为 `read:false, write:false`
 - 确认 `subscribe`、`sendNotify` 两个云函数都已部署
-- **版本限制**：`sendNotify` 里 `MINIPROGRAM_STATE = 'developer'` 只发给开发版/体验版用户；正式上线前必须改成 `'formal'`
+- **通知跳转版本**：当前由 `cloudfunctions/createReport/index.js` 和 `cloudfunctions/approveReport/index.js` 中的 `MINIPROGRAM_STATE` 控制。`developer` = 开发版，`trial` = 体验版，`formal` = 正式版；当前体验版测试阶段使用 `trial`，正式发布前必须切换为 `formal`
 - 一次性订阅额度用完就不会再发（用户需再次授权），这是微信平台规则
 - 云开发环境需与小程序绑定（创建环境时默认已绑定，可在云开发控制台「设置」中确认）
 
