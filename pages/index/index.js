@@ -12,7 +12,8 @@ Page({
 
     // 轮播图
     banners: [],          // 原始 fileID 数组（用于管理操作：删除/排序/预览）
-    bannerUrls: [],       // 临时 URL 数组（用于页面渲染，绕过云存储跨用户权限限制）
+    bannerUrls: [],       // 受控云函数生成的临时 URL 数组
+    bannerLoadFailed: false,
 
     // 记账入口
     billMonthExpense: null,
@@ -73,12 +74,7 @@ Page({
       update.banners = newBanners;
     }
     this.setData(update);
-    // 将云文件 ID 转换为临时 URL，解决伴侣上传的图片因云存储权限无法显示的问题
-    if (newBanners.length > 0) {
-      await this.refreshBannerUrls(newBanners);
-    } else {
-      this.setData({ bannerUrls: [] });
-    }
+    await this.refreshBannerUrls();
     if (userInfo.partnerId) {
       this.loadBillMonthExpense();
       this.loadLatestReports();
@@ -248,18 +244,7 @@ Page({
     if (!this.data.banners.length) return;
     const fileIDs = [...this.data.banners];
     this.setData({ showBannerManage: true, manageBanners: fileIDs });
-    // 转换管理弹层的缩略图为临时 URL
-    try {
-      const res = await wx.cloud.getTempFileURL({ fileList: fileIDs });
-      const fileList = res.fileList || [];
-      const urls = fileList.map(function (f, i) {
-        return (f.status === 0 && f.tempFileURL) ? f.tempFileURL : (fileIDs[i] || '');
-      });
-      this.setData({ manageBannerUrls: urls });
-    } catch (err) {
-      console.error('[onManageBanners] 转换临时URL失败:', err);
-      this.setData({ manageBannerUrls: fileIDs });
-    }
+    await this.refreshManageBannerUrls(fileIDs);
   },
 
   /** 关闭管理弹层 */
@@ -294,39 +279,31 @@ Page({
       '\n  错误详情:', e.detail);
   },
 
-  /** 将云文件 fileID 批量转换为临时 HTTP URL（解决跨用户云存储访问权限问题） */
-  async refreshBannerUrls(fileIDs) {
-    if (!fileIDs || fileIDs.length === 0) {
-      this.setData({ bannerUrls: [] });
-      return;
-    }
-    console.log('[refreshBannerUrls] 请求转换', fileIDs.length, '个fileID:', fileIDs.map(function (f) { return f.slice(-20); }));
+  /** 由受控云函数读取真实 Banner 并生成临时 URL。 */
+  async refreshBannerUrls() {
+    const requestId = (this._bannerRequestId || 0) + 1;
+    this._bannerRequestId = requestId;
     try {
-      const res = await wx.cloud.getTempFileURL({ fileList: fileIDs });
-      console.log('[refreshBannerUrls] API返回:', JSON.stringify(res));
-      const fileList = res.fileList || [];
-      // 逐文件检查转换结果，status !== 0 的视为失败
-      const urls = fileList.map(function (f, i) {
-        if (f.status === 0 && f.tempFileURL) {
-          return f.tempFileURL;
-        }
-        console.warn('[refreshBannerUrls] 第' + i + '个文件转换失败: status=' + f.status + ', errMsg=' + (f.errMsg || '无')); 
-        return ''; // 先占位，下面回退
-      });
-      // 回退策略：转换失败的用原始 fileID（自己的图片用 fileID 仍可加载）
-      const finalUrls = urls.map(function (url, i) {
-        return url || fileIDs[i] || '';
-      });
-      const failedCount = urls.filter(function (u) { return !u; }).length;
-      if (failedCount > 0) {
-        console.warn('[refreshBannerUrls] ' + failedCount + '个文件转换失败，已回退使用原始fileID');
+      const res = await wx.cloud.callFunction({ name: 'getSharedBanners', data: {} });
+      if (requestId !== this._bannerRequestId) return;
+      const result = res.result || {};
+      if (!result.success) {
+        console.error('[refreshBannerUrls] 加载失败:', result.code || '', result.msg || '');
+        this.setData({ bannerUrls: [], bannerLoadFailed: true });
+        return;
       }
-      console.log('[refreshBannerUrls] 最终URL数:', finalUrls.length, ', 前3个:', finalUrls.slice(0, 3).map(function (u) { return u.slice(0, 50) + '...'; }));
-      this.setData({ bannerUrls: finalUrls });
+      const banners = Array.isArray(result.banners) ? result.banners : [];
+      const items = Array.isArray(result.items) ? result.items : [];
+      const urls = items.filter((item) => item.success && item.tempURL).map((item) => item.tempURL);
+      const failedCount = items.length - urls.length;
+      if (failedCount > 0) console.warn('[refreshBannerUrls] 有 ' + failedCount + ' 张图片暂时无法加载，已安全跳过');
+      const app = getApp();
+      app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners });
+      this.setData({ banners, bannerUrls: urls, bannerLoadFailed: banners.length > 0 && urls.length === 0 });
     } catch (err) {
-      console.error('[refreshBannerUrls] 整体调用失败:', err);
-      // 整体失败时直接用原始 fileID
-      this.setData({ bannerUrls: fileIDs });
+      if (requestId !== this._bannerRequestId) return;
+      console.error('[refreshBannerUrls] 云函数调用失败:', err);
+      this.setData({ bannerUrls: [], bannerLoadFailed: true });
     }
   },
 
@@ -336,16 +313,20 @@ Page({
       this.setData({ manageBannerUrls: [] });
       return;
     }
+    const requestId = (this._manageBannerRequestId || 0) + 1;
+    this._manageBannerRequestId = requestId;
     try {
-      const res = await wx.cloud.getTempFileURL({ fileList: fileIDs });
-      const fileList = res.fileList || [];
-      const urls = fileList.map(function (f, i) {
-        return (f.status === 0 && f.tempFileURL) ? f.tempFileURL : (fileIDs[i] || '');
-      });
-      this.setData({ manageBannerUrls: urls });
+      const res = await wx.cloud.callFunction({ name: 'getSharedBanners', data: {} });
+      if (requestId !== this._manageBannerRequestId) return;
+      const result = res.result || {};
+      if (!result.success) throw new Error(result.msg || 'Banner 加载失败');
+      const itemMap = {};
+      (result.items || []).forEach((item) => { itemMap[item.fileID] = item.tempURL || ''; });
+      this.setData({ manageBannerUrls: fileIDs.map((fileID) => itemMap[fileID] || '') });
     } catch (err) {
-      console.error('[refreshManageBannerUrls] 转换失败:', err);
-      this.setData({ manageBannerUrls: fileIDs });
+      if (requestId !== this._manageBannerRequestId) return;
+      console.error('[refreshManageBannerUrls] 加载失败:', err);
+      this.setData({ manageBannerUrls: fileIDs.map(() => '') });
     }
   },
 

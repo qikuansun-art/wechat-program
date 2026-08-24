@@ -1,7 +1,7 @@
 /* pages/bill/bill.wxss —— 账单页样式（Tab） */
 
 .page {
-  padding-bottom: 140rpx;
+  padding-bottom: calc(220rpx + env(safe-area-inset-bottom));
 }
 
 /* 顶部工具栏 */
@@ -366,30 +366,24 @@
   margin-top: 12rpx;
 }
 
-/* 底部按钮 */
-.footer-space {
-  height: 160rpx;
-}
-.add-bar {
+/* 右下角固定记账按钮，位于原生 TabBar 上方 */
+.add-fab {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  padding: 20rpx 24rpx calc(20rpx + env(safe-area-inset-bottom));
-  background: linear-gradient(transparent, #f7f7f7 30%);
-}
-.add-btn {
-  height: 96rpx;
+  right: 28rpx;
+  bottom: calc(120rpx + env(safe-area-inset-bottom));
+  z-index: 20;
+  height: 88rpx;
+  padding: 0 34rpx;
   background: linear-gradient(135deg, #FF6B81, #FF8E9F);
   color: #fff;
-  font-size: 32rpx;
+  font-size: 30rpx;
   font-weight: 600;
-  border-radius: 48rpx;
+  border-radius: 44rpx;
   display: flex;
   align-items: center;
   justify-content: center;
   box-shadow: 0 8rpx 20rpx rgba(255, 107, 129, 0.3);
 }
-.add-btn:active {
+.add-fab:active {
   opacity: 0.9;
 }

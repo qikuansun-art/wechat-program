@@ -3,9 +3,9 @@
 
   <!-- ====== 顶部滚动 Banner ====== -->
   <view class="banner-wrap">
-    <swiper class="banner-swiper" indicator-dots="{{banners.length > 1}}" indicator-color="rgba(255,255,255,0.4)"
-      indicator-active-color="#FF6B81" autoplay="{{banners.length > 1}}" interval="3500" duration="300"
-      circular="{{banners.length > 1}}" bindchange="onBannerChange">
+    <swiper class="banner-swiper" indicator-dots="{{bannerUrls.length > 1}}" indicator-color="rgba(255,255,255,0.4)"
+      indicator-active-color="#FF6B81" autoplay="{{bannerUrls.length > 1}}" interval="3500" duration="300"
+      circular="{{bannerUrls.length > 1}}" bindchange="onBannerChange">
       <swiper-item wx:for="{{bannerUrls}}" wx:key="*this">
         <image class="banner-img" src="{{item}}" mode="aspectFill" bindtap="onPreviewBanner" data-idx="{{index}}" binderror="onBannerImgError" />
       </swiper-item>
@@ -15,8 +15,13 @@
           <text class="banner-empty-text">点击下方按钮添加轮播图</text>
         </view>
       </swiper-item>
+      <swiper-item wx:if="{{bannerLoadFailed && banners.length > 0}}">
+        <view class="banner-empty">
+          <text class="banner-empty-text">图片暂时无法加载，请稍后重试</text>
+        </view>
+      </swiper-item>
     </swiper>
-    <view class="banner-counter" wx:if="{{banners.length > 1}}">{{bannerCurrent + 1}}/{{banners.length}}</view>
+    <view class="banner-counter" wx:if="{{bannerUrls.length > 1}}">{{bannerCurrent + 1}}/{{bannerUrls.length}}</view>
     <view class="banner-actions">
       <view class="banner-action-btn" bindtap="onAddBanner" wx:if="{{!uploading}}">+ 添加图片</view>
       <view class="banner-action-btn" wx:if="{{banners.length > 0}}" bindtap="onManageBanners">管理</view>

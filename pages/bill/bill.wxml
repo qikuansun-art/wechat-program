@@ -111,11 +111,6 @@
     </view>
   </view>
 
-  <!-- 底部留白 -->
-  <view class="footer-space"></view>
-
-  <!-- 记一笔 -->
-  <view class="add-bar" bindtap="onAdd">
-    <view class="add-btn">＋ 记一笔</view>
-  </view>
+  <!-- 固定记一笔入口 -->
+  <view class="add-fab" bindtap="onAdd">＋ 记一笔</view>
 </view>

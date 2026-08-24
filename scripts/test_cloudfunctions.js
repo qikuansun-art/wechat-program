@@ -3,6 +3,7 @@
 //       模拟用户 A / B / 陌生人 C 走完整业务流程，验证核心逻辑正确性。
 const path = require('path');
 const Module = require('module');
+const fs = require('fs');
 
 // ============================================================
 // 1. 内存数据库 + mock wx-server-sdk
@@ -130,6 +131,7 @@ const TEMPLATE_APPROVE_RESULT = 'nrteb3ujtZBTIHtyABGP0FGP3Dy19PxRelc0IFFnaB8';
 const cloudFunctionCalls = [];
 const notifyCalls = [];
 let notifyError = null;
+let tempFileFailures = new Set();
 
 const mockCloud = {
   DYNAMIC_CURRENT_ENV: Symbol('env'),
@@ -186,6 +188,11 @@ const mockCloud = {
     cloudFunctionCalls.push({ name, data });
     return { result: { success: true } };
   },
+  getTempFileURL: async ({ fileList }) => ({
+    fileList: fileList.map((fileID) => tempFileFailures.has(fileID)
+      ? { fileID, status: -1, errMsg: 'mock file unavailable' }
+      : { fileID, status: 0, tempFileURL: 'https://temp.example/' + encodeURIComponent(fileID) })
+  }),
   openapi: {
     subscribeMessage: {
       send: async (options) => {
@@ -231,6 +238,7 @@ function assert(cond, msg) {
   console.log('\n== 登录 ==');
   const loginA1 = await callAs(A, 'login');
   assert(loginA1.success && loginA1.userInfo.bindCode, 'A 首次登录：注册成功并生成邀请码');
+  assert(Array.isArray(loginA1.userInfo.banners), '新用户首次创建：初始化 banners 空数组');
   const loginA2 = await callAs(A, 'login');
   assert(loginA2.userInfo._id === loginA1.userInfo._id, 'A 二次登录：不会重复注册');
   const loginB = await callAs(B, 'login');
@@ -402,6 +410,85 @@ function assert(cond, msg) {
   const approveOk = await callAs(A, 'approveReport', { reportId: r2.id, action: 'approve' });
   const report2 = store.reports.find((x) => x._id === r2.id);
   assert(approveOk.success && report2.status === 'approved', 'B 发报备、A 批准：反向流程成功');
+
+  // ---------- Banner 原子同步与受控访问 ----------
+  console.log('\n== Banner 原子同步与受控访问 ==');
+  const banner1 = 'cloud://test-env/banners/a-1.jpg';
+  const banner2 = 'cloud://test-env/banners/a-2.jpg';
+  const banner3 = 'cloud://test-env/banners/a-3.jpg';
+  const strangerBanner = 'cloud://test-env/private/stranger.jpg';
+  const bannerUserA = () => store.users.find((user) => user.openid === A);
+  const bannerUserB = () => store.users.find((user) => user.openid === B);
+
+  const addBanner = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner1, banner2] });
+  assert(addBanner.success && deepEqual(bannerUserA().banners, [banner1, banner2]) && deepEqual(bannerUserB().banners, [banner1, banner2]),
+    'Banner add：双方原子写入同一个最终数组');
+  const duplicateAdd = await callAs(B, 'updateBanners', { action: 'add', fileIDs: [banner2, banner2] });
+  assert(duplicateAdd.success && deepEqual(duplicateAdd.banners, [banner1, banner2]), 'Banner add：重复 fileID 自动去重');
+
+  const reorder = await callAs(A, 'updateBanners', { action: 'reorder', order: [banner2, banner1] });
+  assert(reorder.success && deepEqual(bannerUserA().banners, [banner2, banner1]) && deepEqual(bannerUserB().banners, [banner2, banner1]),
+    'Banner reorder：只调整顺序并同步双方');
+  const reorderAddUnknown = await callAs(A, 'updateBanners', { action: 'reorder', order: [banner2, banner1, strangerBanner] });
+  assert(!reorderAddUnknown.success && reorderAddUnknown.code === 'INVALID_REORDER', 'Banner reorder：增加陌生 fileID 被拒绝');
+  const reorderRemoveOne = await callAs(A, 'updateBanners', { action: 'reorder', order: [banner2] });
+  assert(!reorderRemoveOne.success && reorderRemoveOne.code === 'INVALID_REORDER', 'Banner reorder：删除现有 fileID 被拒绝');
+
+  const removeMissing = await callAs(A, 'updateBanners', { action: 'remove', fileID: banner3 });
+  assert(!removeMissing.success && removeMissing.code === 'BANNER_NOT_FOUND', 'Banner delete：删除不存在项返回明确业务结果');
+  const removeBanner = await callAs(B, 'updateBanners', { action: 'remove', fileID: banner1 });
+  assert(removeBanner.success && deepEqual(bannerUserA().banners, [banner2]) && deepEqual(bannerUserB().banners, [banner2]),
+    'Banner delete：正常删除并同步双方');
+
+  transactionFailAfterWrites = 1;
+  const failedBannerWrite = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner3] });
+  transactionFailAfterWrites = null;
+  assert(!failedBannerWrite.success && deepEqual(bannerUserA().banners, [banner2]) && deepEqual(bannerUserB().banners, [banner2]),
+    'Banner 伴侣写入失败：事务整体回滚，不产生单向状态');
+
+  const concurrentBanner = await Promise.all([
+    callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner1] }),
+    callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner3] })
+  ]);
+  assert(concurrentBanner.every((result) => result.success) && deepEqual(bannerUserA().banners, bannerUserB().banners) &&
+    bannerUserA().banners.includes(banner1) && bannerUserA().banners.includes(banner3),
+    'Banner 并发操作：基于事务最新数据计算且双方保持一致');
+
+  const originalPartnerId = bannerUserB().partnerId;
+  bannerUserB().partnerId = '';
+  const mismatchedRelation = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [strangerBanner] });
+  bannerUserB().partnerId = originalPartnerId;
+  assert(!mismatchedRelation.success && mismatchedRelation.code === 'PARTNER_MISMATCH' && !bannerUserA().banners.includes(strangerBanner),
+    'Banner 双方关系不一致：拒绝更新且不写入');
+
+  const arbitraryRead = await callAs(A, 'getSharedBanners', { fileIDs: [strangerBanner], fileID: strangerBanner });
+  assert(arbitraryRead.success && arbitraryRead.items.length === bannerUserA().banners.length &&
+    !arbitraryRead.items.some((item) => item.fileID === strangerBanner),
+    'getSharedBanners：忽略客户端任意 fileID，只读取当前用户共享 Banner');
+  tempFileFailures = new Set([banner1]);
+  const partialURLFailure = await callAs(B, 'getSharedBanners', {});
+  tempFileFailures = new Set();
+  assert(partialURLFailure.success && partialURLFailure.items.length === bannerUserB().banners.length &&
+    partialURLFailure.items.some((item) => item.fileID === banner1 && !item.success) &&
+    partialURLFailure.items.some((item) => item.success),
+    'getSharedBanners：单张 URL 失败可识别且不影响其他图片');
+
+  const beforeConflictA = bannerUserA().banners.slice();
+  bannerUserB().banners = bannerUserB().banners.slice().reverse();
+  const historicalConflict = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [strangerBanner] });
+  assert(!historicalConflict.success && historicalConflict.code === 'BANNER_HISTORY_CONFLICT' && deepEqual(bannerUserA().banners, beforeConflictA),
+    'Banner 历史分叉：明确拒绝，不静默覆盖任一方');
+  bannerUserB().banners = beforeConflictA.slice();
+
+  // ---------- 账单固定入口结构 ----------
+  console.log('\n== 账单固定入口结构 ==');
+  const billWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.wxml'), 'utf8');
+  const billWxss = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.wxss'), 'utf8');
+  assert((billWxml.match(/bindtap="onAdd"/g) || []).length === 1 && billWxml.includes('class="add-fab"'),
+    '账单入口：原底部重复入口已移除，悬浮按钮仍绑定 onAdd');
+  assert(/\.add-fab\s*\{[^}]*position:\s*fixed;/s.test(billWxss) && /safe-area-inset-bottom/.test(billWxss),
+    '账单入口：fixed 定位并兼顾底部安全区');
+  assert(/\.page\s*\{[^}]*padding-bottom:\s*calc\(/s.test(billWxss), '账单列表：保留足够 bottom padding 避免遮挡最后一条');
 
   // ---------- 记账 ----------
   console.log('\n== 记账（共享账本） ==');

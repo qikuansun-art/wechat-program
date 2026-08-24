@@ -60,6 +60,7 @@ exports.main = async (event, context) => {
       partnerId: '',        // 伴侣的用户文档 _id，空=未绑定
       partnerName: '',
       bindTime: null,
+      banners: [],
       createdAt: db.serverDate(),
       lastLoginAt: db.serverDate()
     };
