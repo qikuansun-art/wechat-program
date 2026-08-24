@@ -561,8 +561,17 @@ function assert(cond, msg) {
   const calendarUtil = require(path.join(__dirname, '..', 'utils', 'calendar.js'));
 
   assert(appConfig.pages.includes(schedulePagePath) && appConfig.pages.includes(scheduleEditPath), '日程页面：主页和编辑页已在 app.json 注册');
-  assert(!appConfig.tabBar.list.some((item) => item.pagePath === schedulePagePath || item.pagePath === scheduleEditPath),
-    '日程页面：本轮暂未加入 TabBar');
+  const expectedTabPages = ['pages/index/index', 'pages/bill/bill', 'pages/record/record', schedulePagePath, 'pages/mine/mine'];
+  const expectedTabTexts = ['首页', '账单', '记录', '日程', '我的'];
+  assert(appConfig.tabBar.list.length === 5 && deepEqual(appConfig.tabBar.list.map((item) => item.pagePath), expectedTabPages) &&
+    deepEqual(appConfig.tabBar.list.map((item) => item.text), expectedTabTexts),
+    'TabBar：正好 5 项，顺序为首页/账单/记录/日程/我的');
+  const scheduleTab = appConfig.tabBar.list[3];
+  assert(scheduleTab.pagePath === schedulePagePath &&
+    fs.existsSync(path.join(__dirname, '..', scheduleTab.iconPath)) && fs.existsSync(path.join(__dirname, '..', scheduleTab.selectedIconPath)),
+    'TabBar：日程普通及选中图标均指向真实文件');
+  assert(expectedTabPages.slice(0, 3).concat(expectedTabPages[4]).every((pagePath) => appConfig.tabBar.list.some((item) => item.pagePath === pagePath)),
+    'TabBar：原有首页、账单、记录、我的入口全部保留');
   const calendarCells = calendarUtil.buildMonth(2026, 8, { today: '2026-08-24', selectedDate: '2026-08-24', markedDates: { '2026-08-24': true } });
   assert(calendarCells.length === 42 && calendarCells.filter((item) => item.currentMonth).length === 31,
     '月历工具：固定生成 6×7 共 42 格并正确包含当月天数');
@@ -573,6 +582,9 @@ function assert(cond, msg) {
     '日程主页：当前月点击日期从 dateMap 筛选，不重复请求 getSchedules');
   assert(/\.create-fab\s*\{[^}]*position:\s*fixed;/s.test(scheduleWxss) && scheduleWxss.includes('safe-area-inset-bottom'),
     '日程主页：新建按钮 fixed 定位并兼顾安全区');
+  assert(/\.create-fab\s*\{[^}]*bottom:\s*calc\(120rpx\s*\+\s*env\(safe-area-inset-bottom\)\)/s.test(scheduleWxss) &&
+    /\.schedule-page\s*\{[^}]*padding:[^;]*calc\(280rpx\s*\+\s*env\(safe-area-inset-bottom\)\)/s.test(scheduleWxss),
+    'TabBar：新建按钮位于原生栏上方，页面底部留白不会遮挡最后一项');
   assert(scheduleJs.includes('schedule-edit/schedule-edit?date=${this.data.selectedDate}'), '日程主页：新建时传入当前选中日期');
   assert(editJs.includes("name: 'saveSchedule'") && editJs.includes("name: 'getScheduleDetail'") &&
     scheduleJs.includes("name: 'toggleSchedule'") && editJs.includes("name: 'deleteSchedule'"),

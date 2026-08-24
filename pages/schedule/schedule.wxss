@@ -1,7 +1,7 @@
 .schedule-page {
   min-height: 100vh;
   box-sizing: border-box;
-  padding: 24rpx 24rpx calc(220rpx + env(safe-area-inset-bottom));
+  padding: 24rpx 24rpx calc(280rpx + env(safe-area-inset-bottom));
 }
 .calendar-card, .day-section, .state-card, .loading-card {
   background: #fff;
@@ -50,5 +50,5 @@
 .state-title { display: block; font-size: 28rpx; margin-top: 18rpx; }
 .state-action { display: inline-flex; margin-top: 28rpx; height: 70rpx; padding: 0 36rpx; align-items: center; border-radius: 35rpx; color: #fff; background: #FF6B81; }
 .state-action.secondary { color: #FF6B81; background: #FFF0F2; }
-.create-fab { position: fixed; right: 28rpx; bottom: calc(36rpx + env(safe-area-inset-bottom)); z-index: 20; height: 88rpx; padding: 0 34rpx; display: flex; align-items: center; justify-content: center; border-radius: 44rpx; color: #fff; background: #FF6B81; font-size: 29rpx; font-weight: 600; box-shadow: 0 8rpx 20rpx rgba(255, 107, 129, 0.28); }
+.create-fab { position: fixed; right: 28rpx; bottom: calc(120rpx + env(safe-area-inset-bottom)); z-index: 20; height: 88rpx; padding: 0 34rpx; display: flex; align-items: center; justify-content: center; border-radius: 44rpx; color: #fff; background: #FF6B81; font-size: 29rpx; font-weight: 600; box-shadow: 0 8rpx 20rpx rgba(255, 107, 129, 0.28); }
 .create-fab:active { opacity: .88; }

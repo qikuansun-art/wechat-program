@@ -44,6 +44,12 @@
         "text": "记录"
       },
       {
+        "pagePath": "pages/schedule/schedule",
+        "iconPath": "images/tab-schedule-gray.png",
+        "selectedIconPath": "images/tab-schedule-pink.png",
+        "text": "日程"
+      },
+      {
         "pagePath": "pages/mine/mine",
         "iconPath": "images/tab-mine-gray.png",
         "selectedIconPath": "images/tab-mine-pink.png",
