@@ -10,12 +10,21 @@ const TYPE_META = {
 function enrichItem(item) {
   const meta = TYPE_META[item.type] || TYPE_META.schedule;
   const hasTime = !!item.startTime;
+  const occurrenceDate = item.occurrenceDate || item.date;
+  const scheduleId = item.scheduleId || item._id;
+  const instanceKey = item.instanceKey || `${scheduleId}:${occurrenceDate}`;
   let stateText = '';
   if (item.type === 'todo') stateText = item.completed ? '已完成' : '待完成';
   if (item.type === 'checkin') stateText = item.completed ? '已打卡' : '待打卡';
   return Object.assign({}, item, {
     typeText: meta.text,
     typeClass: meta.className,
+    occurrenceDate,
+    scheduleId,
+    instanceKey,
+    ownerLabel: item.ownerLabel || '双人',
+    ownerClass: item.ownerType === 'personal' ? (item.ownerLabel === '我的' ? 'mine' : 'partner') : 'couple',
+    repeatText: item.repeatType === 'daily' ? '每天' : item.repeatType === 'weekly' ? '每周' : item.repeatType === 'monthly' ? '每月' : '',
     timeText: hasTime ? (item.endTime ? `${item.startTime}–${item.endTime}` : item.startTime) : '',
     stateText,
     completedHint: item.completed && item.completedByName ? `由 ${item.completedByName} 完成` : ''
@@ -115,8 +124,8 @@ Page({
     const dateMap = {};
     list.forEach((raw) => {
       const item = enrichItem(raw);
-      if (!dateMap[item.date]) dateMap[item.date] = [];
-      dateMap[item.date].push(item);
+      if (!dateMap[item.occurrenceDate]) dateMap[item.occurrenceDate] = [];
+      dateMap[item.occurrenceDate].push(item);
     });
     Object.keys(dateMap).forEach((date) => {
       dateMap[date].sort((left, right) => {
@@ -177,30 +186,37 @@ Page({
   },
 
   onEditItem(event) {
-    const id = event.currentTarget.dataset.id;
+    const id = event.currentTarget.dataset.scheduleId || event.currentTarget.dataset.id;
     if (id) wx.navigateTo({ url: `/pages/schedule-edit/schedule-edit?id=${id}` });
   },
 
   async onToggle(event) {
-    const id = event.currentTarget.dataset.id;
+    const id = event.currentTarget.dataset.scheduleId || event.currentTarget.dataset.id;
+    const occurrenceDate = event.currentTarget.dataset.occurrenceDate;
+    const instanceKey = event.currentTarget.dataset.instanceKey;
     const completed = event.currentTarget.dataset.completed === true || event.currentTarget.dataset.completed === 'true';
-    if (!id || this._togglingId) return;
-    this._togglingId = id;
+    if (!id || !occurrenceDate || !instanceKey || this._togglingKey) return;
+    this._togglingKey = instanceKey;
     try {
-      const res = await wx.cloud.callFunction({ name: 'toggleSchedule', data: { id, completed: !completed } });
+      const res = await wx.cloud.callFunction({ name: 'toggleSchedule', data: { id, occurrenceDate, completed: !completed } });
       const result = res.result || {};
       if (!result.success || !result.schedule) {
         util.toast(result.msg || '操作失败，请重试');
         return;
       }
-      const nextList = this.data.monthList.map((item) => item._id === id ? result.schedule : item);
+      const nextList = this.data.monthList.map((item) => {
+        const itemDate = item.occurrenceDate || item.date;
+        const itemId = item.scheduleId || item._id;
+        const itemKey = item.instanceKey || `${itemId}:${itemDate}`;
+        return itemKey === instanceKey ? Object.assign({}, item, result.schedule, { occurrenceDate: itemDate, instanceKey: itemKey }) : item;
+      });
       this.applyMonthList(nextList);
       util.toast(result.schedule.completed ? '已完成' : '已取消完成');
     } catch (err) {
       console.error('[schedule] toggle failed:', err);
       util.toast('操作失败，请检查网络');
     } finally {
-      this._togglingId = '';
+      this._togglingKey = '';
     }
   },
 

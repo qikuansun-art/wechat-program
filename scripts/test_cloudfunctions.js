@@ -8,7 +8,7 @@ const fs = require('fs');
 // ============================================================
 // 1. 内存数据库 + mock wx-server-sdk
 // ============================================================
-const store = { users: [], reports: [], bills: [], subscriptions: [], schedules: [] };
+const store = { users: [], reports: [], bills: [], subscriptions: [], schedules: [], schedule_completions: [] };
 let autoId = 0;
 const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
@@ -79,6 +79,11 @@ function makeCollection(name) {
       };
     },
     add: async ({ data }) => {
+      if (name === 'schedule_completions' && store[name].some((item) => item.scheduleId === data.scheduleId && item.occurrenceDate === data.occurrenceDate)) {
+        const error = new Error('E11000 duplicate key error: scheduleId + occurrenceDate unique index');
+        error.errCode = -502001;
+        throw error;
+      }
       const _id = nextId();
       store[name].push(Object.assign({ _id }, data));
       return { _id };
@@ -546,6 +551,127 @@ function assert(cond, msg) {
   assert(ownDelete.success && !store.schedules.some((item) => item._id === deleteOwnTarget.id), '日程删除：创建人可以删除');
   assert(partnerDelete.success && !store.schedules.some((item) => item._id === deletePartnerTarget.id), '日程删除：伴侣也可以删除');
 
+  // ---------- 情侣日程 V2：归属、循环与实例完成 ----------
+  console.log('\n== 情侣日程 V2 ==');
+  const personalMine = await callAs(A, 'saveSchedule', {
+    type: 'todo', title: '我的待办', date: '2026-09-01', ownerType: 'personal', ownerId: scheduleUserA()._id, repeatType: 'none'
+  });
+  const personalPartner = await callAs(A, 'saveSchedule', {
+    type: 'todo', title: 'TA的待办', date: '2026-09-01', ownerType: 'personal', ownerId: scheduleUserB()._id, repeatType: 'none'
+  });
+  const coupleOwned = await callAs(A, 'saveSchedule', {
+    type: 'schedule', title: '双人安排', date: '2026-09-01', ownerType: 'couple', ownerId: scheduleUserI()._id, repeatType: 'none'
+  });
+  const invalidOwner = await callAs(A, 'saveSchedule', {
+    type: 'todo', title: '非法归属', date: '2026-09-01', ownerType: 'personal', ownerId: scheduleUserI()._id
+  });
+  assert(personalMine.success && personalMine.schedule.ownerId === scheduleUserA()._id, 'V2 归属：可以创建“我的” personal');
+  assert(personalPartner.success && personalPartner.schedule.ownerId === scheduleUserB()._id, 'V2 归属：可以创建“TA” personal');
+  assert(coupleOwned.success && coupleOwned.schedule.ownerType === 'couple' && coupleOwned.schedule.ownerId === null, 'V2 归属：couple 强制 ownerId=null');
+  assert(!invalidOwner.success && invalidOwner.code === 'INVALID_OWNER_ID', 'V2 归属：第三方 ownerId 被拒绝');
+  assert(personalMine.schedule.creatorId === scheduleUserA()._id, 'V2 归属：creatorId 仍由服务端生成');
+
+  const legacySchedule = {
+    _id: nextId(), creatorId: scheduleUserA()._id, creatorName: 'A', type: 'todo', title: 'V1 老事项', date: '2026-09-02',
+    startTime: '07:00', endTime: '', note: '', completed: false, completedBy: '', completedByName: '', completedAt: null,
+    createdAt: new Date('2026-08-01T00:00:00Z'), updatedAt: new Date('2026-08-01T00:00:00Z'), updatedBy: scheduleUserA()._id
+  };
+  store.schedules.push(legacySchedule);
+  const legacyDetail = await callAs(B, 'getScheduleDetail', { id: legacySchedule._id });
+  assert(legacyDetail.success && legacyDetail.schedule.ownerType === 'couple' && legacyDetail.schedule.ownerId === null &&
+    legacyDetail.schedule.ownerLabel === '双人' && legacyDetail.schedule.repeatType === 'none', 'V2 兼容：V1 老数据默认 couple + none');
+
+  const daily = await callAs(A, 'saveSchedule', {
+    type: 'todo', title: '每日运动', ownerType: 'couple', repeatType: 'daily',
+    repeatStartDate: '2026-08-30', repeatEndDate: '2026-09-02', date: '2099-01-01', repeatWeekdays: [1], repeatDay: 9
+  });
+  const weekly = await callAs(B, 'saveSchedule', {
+    type: 'checkin', title: '每周训练', ownerType: 'personal', ownerId: scheduleUserA()._id, repeatType: 'weekly',
+    repeatStartDate: '2026-09-01', repeatEndDate: '2026-09-10', repeatWeekdays: [4, 2, 2], repeatDay: 20
+  });
+  const monthly28 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月28', repeatType: 'monthly', repeatStartDate: '2026-01-01', repeatEndDate: '2026-12-31', repeatDay: 28 });
+  const monthly29 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月29', repeatType: 'monthly', repeatStartDate: '2028-02-01', repeatEndDate: '2028-02-29', repeatDay: 29 });
+  const monthly30 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月30', repeatType: 'monthly', repeatStartDate: '2026-09-01', repeatEndDate: '2026-10-31', repeatDay: 30 });
+  const monthly31 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月31', repeatType: 'monthly', repeatStartDate: '2026-09-01', repeatEndDate: '2026-10-31', repeatDay: 31 });
+  const invalidRepeatRange = await callAs(A, 'saveSchedule', { type: 'todo', title: '倒置范围', repeatType: 'daily', repeatStartDate: '2026-09-02', repeatEndDate: '2026-09-01' });
+  assert(daily.success && daily.schedule.date === null && deepEqual(daily.schedule.repeatWeekdays, []) && daily.schedule.repeatDay === null, 'V2 循环：daily 严格清洗无关字段');
+  assert(weekly.success && deepEqual(weekly.schedule.repeatWeekdays, [2, 4]) && weekly.schedule.repeatDay === null, 'V2 循环：weekly 星期去重并升序');
+  assert(monthly28.success && monthly29.success && monthly30.success && monthly31.success, 'V2 循环：monthly 支持 28/29/30/31');
+  assert(!invalidRepeatRange.success && invalidRepeatRange.code === 'INVALID_REPEAT_RANGE', 'V2 循环：start > end 被拒绝');
+
+  const septemberV2 = await callAs(A, 'getSchedules', { year: 2026, month: 9 });
+  const dailyDates = septemberV2.list.filter((item) => item.scheduleId === daily.id).map((item) => item.occurrenceDate);
+  const weeklyDates = septemberV2.list.filter((item) => item.scheduleId === weekly.id).map((item) => item.occurrenceDate);
+  assert(septemberV2.success && septemberV2.list.some((item) => item.scheduleId === personalMine.id) && dailyDates.join(',') === '2026-09-01,2026-09-02',
+    'V2 查询：月查询混合普通事项和跨月 daily，并包含起止边界');
+  assert(weeklyDates.join(',') === '2026-09-01,2026-09-03,2026-09-08,2026-09-10', 'V2 循环：weekly 多星期按 ISO 1=周一规则展开');
+  assert(!septemberV2.list.some((item) => item.scheduleId === monthly31.id) && septemberV2.list.some((item) => item.scheduleId === monthly30.id && item.occurrenceDate === '2026-09-30'),
+    'V2 循环：9 月有 30 日且不存在的 31 日被跳过');
+  const octoberV2 = await callAs(A, 'getSchedules', { year: 2026, month: 10 });
+  assert(octoberV2.list.some((item) => item.scheduleId === monthly31.id && item.occurrenceDate === '2026-10-31'), 'V2 循环：10 月 31 日正常产生实例');
+  const feb28 = await callAs(A, 'getSchedules', { date: '2026-02-28' });
+  const feb29 = await callAs(A, 'getSchedules', { date: '2028-02-29' });
+  assert(feb28.list.some((item) => item.scheduleId === monthly28.id) && feb29.list.some((item) => item.scheduleId === monthly29.id), 'V2 循环：每月 28 日及闰年 29 日正确展开');
+  const singleDay = await callAs(A, 'getSchedules', { date: '2026-09-01' });
+  assert(singleDay.success && singleDay.list.every((item) => item.occurrenceDate === '2026-09-01') &&
+    singleDay.list.every((item) => item.instanceKey === `${item.scheduleId}:${item.occurrenceDate}`), 'V2 查询：date 查询只返回单日且 instanceKey 正确');
+  assert(singleDay.list.find((item) => item.scheduleId === personalMine.id).ownerLabel === '我的' &&
+    singleDay.list.find((item) => item.scheduleId === personalPartner.id).ownerLabel === 'TA' &&
+    singleDay.list.find((item) => item.scheduleId === coupleOwned.id).ownerLabel === '双人', 'V2 查询：三种 ownerLabel 相对当前用户计算');
+  const occurrenceSortKeys = septemberV2.list.map((item) => `${item.occurrenceDate}|${item.startTime || '99:99'}|${item.scheduleId}`);
+  assert(deepEqual(occurrenceSortKeys, occurrenceSortKeys.slice().sort()), 'V2 查询：实例按 occurrenceDate、时间稳定排序');
+
+  const recurringTodoComplete = await callAs(A, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-01', completed: true, completedBy: scheduleUserI()._id });
+  const dayOneAfterComplete = await callAs(B, 'getSchedules', { date: '2026-09-01' });
+  const dayTwoAfterComplete = await callAs(B, 'getSchedules', { date: '2026-09-02' });
+  assert(recurringTodoComplete.success && recurringTodoComplete.schedule.completedBy === scheduleUserA()._id &&
+    dayOneAfterComplete.list.find((item) => item.scheduleId === daily.id).completed && !dayTwoAfterComplete.list.find((item) => item.scheduleId === daily.id).completed,
+    'V2 完成：循环 todo 每个 occurrence 独立且 completedBy 由服务端生成');
+  const recurringCheckinComplete = await callAs(B, 'toggleSchedule', { id: weekly.id, occurrenceDate: '2026-09-03', completed: true });
+  assert(recurringCheckinComplete.success && recurringCheckinComplete.schedule.completed, 'V2 完成：循环 checkin 可独立完成');
+  const invalidDailyOccurrence = await callAs(A, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-03', completed: true });
+  const invalidWeeklyOccurrence = await callAs(A, 'toggleSchedule', { id: weekly.id, occurrenceDate: '2026-09-02', completed: true });
+  const invalidMonthlyOccurrence = await callAs(A, 'toggleSchedule', { id: monthly30.id, occurrenceDate: '2026-09-29', completed: true });
+  assert(!invalidDailyOccurrence.success && !invalidWeeklyOccurrence.success && !invalidMonthlyOccurrence.success &&
+    [invalidDailyOccurrence, invalidWeeklyOccurrence, invalidMonthlyOccurrence].every((item) => item.code === 'INVALID_OCCURRENCE'),
+    'V2 完成：范围外、weekly 非规则日、monthly 非规则日全部拒绝');
+  const recurringSchedule = await callAs(A, 'saveSchedule', { type: 'schedule', title: '循环约会', repeatType: 'daily', repeatStartDate: '2026-09-01', repeatEndDate: '2026-09-02' });
+  const recurringScheduleToggle = await callAs(A, 'toggleSchedule', { id: recurringSchedule.id, occurrenceDate: '2026-09-01', completed: true });
+  assert(!recurringScheduleToggle.success && recurringScheduleToggle.code === 'TYPE_NOT_TOGGLEABLE', 'V2 完成：循环 schedule 仍拒绝 toggle');
+  const cancelRecurring = await callAs(B, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-01', completed: false });
+  assert(cancelRecurring.success && !store.schedule_completions.some((item) => item.scheduleId === daily.id && item.occurrenceDate === '2026-09-01'), 'V2 完成：取消完成删除 completion');
+
+  const concurrentComplete = await Promise.all([
+    callAs(A, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-02', completed: true }),
+    callAs(B, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-02', completed: true })
+  ]);
+  assert(concurrentComplete.every((item) => item.success) && store.schedule_completions.filter((item) => item.scheduleId === daily.id && item.occurrenceDate === '2026-09-02').length === 1,
+    'V2 并发：双方同时完成按唯一索引幂等成功');
+  const concurrentCancel = await Promise.all([
+    callAs(A, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-02', completed: false }),
+    callAs(B, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-02', completed: false })
+  ]);
+  assert(concurrentCancel.every((item) => item.success) && !store.schedule_completions.some((item) => item.scheduleId === daily.id && item.occurrenceDate === '2026-09-02'),
+    'V2 并发：双方同时取消按幂等成功');
+
+  await callAs(A, 'toggleSchedule', { id: weekly.id, occurrenceDate: '2026-09-03', completed: true });
+  const foreignRecurringDelete = await callAs(I, 'deleteSchedule', { id: weekly.id });
+  const recurringDelete = await callAs(A, 'deleteSchedule', { id: weekly.id });
+  assert(!foreignRecurringDelete.success && foreignRecurringDelete.code === 'NOT_FOUND', 'V2 删除：第三方不能删除循环规则');
+  assert(recurringDelete.success && !store.schedules.some((item) => item._id === weekly.id) && !store.schedule_completions.some((item) => item.scheduleId === weekly.id),
+    'V2 删除：删除循环规则并清理 completion');
+
+  const convertedRecurring = await callAs(A, 'saveSchedule', {
+    id: personalMine.id, type: 'todo', title: '改成循环', repeatType: 'daily', repeatStartDate: '2026-09-01', repeatEndDate: '2026-09-03',
+    ownerType: 'personal', ownerId: scheduleUserA()._id, completed: true
+  });
+  const convertedBack = await callAs(A, 'saveSchedule', {
+    id: personalMine.id, type: 'todo', title: '改回单次', repeatType: 'none', date: '2026-09-04', ownerType: 'personal', ownerId: scheduleUserA()._id
+  });
+  assert(convertedRecurring.success && convertedRecurring.schedule.completed === false && convertedRecurring.schedule.date === null &&
+    convertedBack.success && convertedBack.schedule.completed === false && convertedBack.schedule.repeatStartDate === null,
+    'V2 编辑：非循环与循环互转时清空旧完成状态并规范化字段');
+
   // ---------- 日程页面结构与前端接入 ----------
   console.log('\n== 日程页面结构与前端接入 ==');
   const appConfig = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'app.json'), 'utf8'));
@@ -599,6 +725,50 @@ function assert(cond, msg) {
     '日程页面：不使用客户端 OPENID/creatorId 参与权限或保存');
   assert(!scheduleJson.usingComponents && !editJson.usingComponents && !/vant|weui|miniprogram_npm/.test(scheduleJs + editJs + scheduleWxml + editWxml),
     '日程页面：未引入第三方 UI 框架');
+
+  // ---------- 日程 V2 页面与交互结构 ----------
+  console.log('\n== 日程 V2 页面与交互结构 ==');
+  assert(editJs.includes("label: '我的'") && editJs.includes("label: 'TA的'") && editJs.includes("label: '双人'") && editJs.includes("ownerChoice: 'couple'"),
+    'V2 编辑页归属：三段选择齐全且默认双人');
+  assert(editJs.includes("item.ownerType === 'personal'") && editJs.includes("let ownerChoice = 'couple'") &&
+    editJs.includes("ownerChoice === 'mine' ? this._myId") && editJs.includes("ownerChoice === 'partner' ? this._partnerId"),
+    'V2 编辑页归属：V1 默认双人，ownerId 只能由当前双方身份推导');
+  assert(!editWxml.includes('bindinput="onOwner') && !editWxml.includes('name="ownerId"'),
+    'V2 编辑页归属：没有任意 ownerId 输入入口');
+  assert(['不重复', '每天', '每周', '每月'].every((text) => editJs.includes(`label: '${text}'`)) &&
+    ['none', 'daily', 'weekly', 'monthly'].every((value) => editJs.includes(`value: '${value}'`)),
+    'V2 编辑页重复：none/daily/weekly/monthly 选择完整');
+  assert(editWxml.includes("repeatType === 'none'") && editWxml.includes('循环开始日期') && editWxml.includes('循环结束日期') &&
+    editJs.includes('repeatEndDate: addDays(start, 30)'), 'V2 编辑页重复：普通日期与循环起止日期按类型展示并默认 30 天');
+  assert(editWxml.includes('重复星期') && editWxml.includes('wx:for="{{weekdayOptions}}"') && editJs.includes('selected.sort((a, b) => a - b)') &&
+    editJs.includes('请至少选择一个重复星期'), 'V2 weekly：支持星期多选、稳定排序及至少一天校验');
+  assert(editJs.includes('isoWeekday(start)') && editJs.includes('dayOfMonth(start)'), 'V2 默认规则：weekly 使用开始日星期，monthly 使用开始日日号');
+  assert(editWxml.includes('没有该日期的月份将自动跳过') && editJs.includes('repeatDay >= 29') && editJs.includes('repeatDay <= 31'),
+    'V2 monthly：29/30/31 显示月份跳过提示');
+  assert(editJs.includes("repeatWeekdays: [], weekdayOptions: markWeekdays([]), repeatDay: null") &&
+    editJs.includes("repeatType, date: this.data.repeatStartDate || this.data.date"), 'V2 类型切换：清理无关字段并在循环转普通时恢复 date');
+  assert(editWxml.includes('修改将影响整个重复事项，已有完成记录会保留') &&
+    editJs.includes('item.repeatStartDate') && editJs.includes('item.repeatWeekdays') && editJs.includes('item.repeatDay'),
+    'V2 编辑循环：完整回填规则并提示修改整条规则');
+  assert(editWxml.includes('bindtap="onStopRepeat"') && editJs.includes('从今天起停止重复，历史记录会保留。') &&
+    editJs.includes('该重复事项尚未产生历史记录，是否直接删除？') && editJs.includes('shanghaiDate(-1)'),
+    'V2 停止重复：入口、上海昨天和无历史删除分支齐全');
+  assert(editJs.includes('删除后，整个重复事项及其完成记录都将移除，无法恢复。'), 'V2 删除：循环规则使用明确删除确认文案');
+  assert(scheduleJs.includes('item.occurrenceDate || item.date') && scheduleJs.includes('dateMap[item.occurrenceDate]') &&
+    scheduleWxml.includes('wx:key="instanceKey"'), 'V2 日程主页：occurrenceDate 分组并使用 instanceKey 唯一渲染');
+  assert(scheduleJs.includes('itemKey === instanceKey') && scheduleJs.includes('data: { id, occurrenceDate, completed: !completed }') &&
+    scheduleWxml.includes('data-occurrence-date="{{item.occurrenceDate}}"'), 'V2 toggle：携带 occurrenceDate 并按 instanceKey 精确更新本地实例');
+  assert(scheduleWxml.includes('owner-tag') && scheduleWxml.indexOf('owner-tag') < scheduleWxml.indexOf('type-tag') &&
+    scheduleWxml.includes('{{item.ownerLabel}}'), 'V2 卡片：归属标签显示在事项类型之前');
+  assert(scheduleWxml.includes('repeat-meta') && scheduleWxml.includes('{{item.repeatText}}重复'), 'V2 卡片：展示轻量循环标识');
+  assert(!scheduleWxml.includes('□') && !scheduleWxml.includes('○') && !scheduleWxml.includes('✓'),
+    'V2 图标：todo/checkin 不再使用字符方框、圆圈或勾号');
+  assert(scheduleWxml.includes('todo-checkbox') && scheduleWxss.includes('.todo-checkbox') && scheduleWxss.includes('.css-checkmark'),
+    'V2 图标：存在 WXSS checkbox 与 CSS 勾号');
+  assert(scheduleWxml.includes('checkin-circle') && scheduleWxss.includes('.checkin-circle') && scheduleWxss.includes('.checkin-dot') &&
+    scheduleWxss.includes('.toggle-button.checkin.checked'), 'V2 图标：存在圆形打卡按钮及完成状态');
+  assert(scheduleWxss.includes('.todo-completed .item-title') && !scheduleWxss.includes('.completed .item-title { color: #9AA0A6; text-decoration: line-through;'),
+    'V2 完成样式：只有 todo 使用删除线，checkin 保留完成者展示');
 
   // ---------- Banner 原子同步与受控访问 ----------
   console.log('\n== Banner 原子同步与受控访问 ==');

@@ -26,10 +26,63 @@
       </view>
 
       <view class="field-block">
+        <text class="field-label">归属</text>
+        <view class="segment-options owner-options">
+          <view class="segment-option {{ownerChoice === item.value ? 'active' : ''}}" wx:for="{{ownerOptions}}" wx:key="value"
+            data-owner="{{item.value}}" bindtap="onOwnerTap">{{item.label}}</view>
+        </view>
+      </view>
+
+      <view class="field-block">
+        <text class="field-label">重复</text>
+        <view class="segment-options repeat-options">
+          <view class="segment-option {{repeatType === item.value ? 'active' : ''}}" wx:for="{{repeatOptions}}" wx:key="value"
+            data-repeat="{{item.value}}" bindtap="onRepeatTap">{{item.label}}</view>
+        </view>
+        <text class="repeat-edit-hint" wx:if="{{editMode && repeatType !== 'none'}}">修改将影响整个重复事项，已有完成记录会保留</text>
+      </view>
+
+      <view class="field-block" wx:if="{{repeatType === 'none'}}">
         <text class="field-label"><text class="required">*</text>日期</text>
         <picker mode="date" value="{{date}}" bindchange="onDateChange">
           <view class="picker-row"><text>{{date}}</text><text class="arrow">›</text></view>
         </picker>
+      </view>
+
+      <view class="repeat-fields" wx:else>
+        <view class="date-range-row">
+          <view class="date-range-field">
+            <text class="field-label"><text class="required">*</text>循环开始日期</text>
+            <picker mode="date" value="{{repeatStartDate}}" bindchange="onRepeatStartChange">
+              <view class="picker-row compact"><text>{{repeatStartDate}}</text><text class="arrow">›</text></view>
+            </picker>
+          </view>
+          <view class="date-range-field">
+            <text class="field-label"><text class="required">*</text>循环结束日期</text>
+            <picker mode="date" value="{{repeatEndDate}}" bindchange="onRepeatEndChange">
+              <view class="picker-row compact"><text>{{repeatEndDate}}</text><text class="arrow">›</text></view>
+            </picker>
+          </view>
+        </view>
+
+        <view class="field-block" wx:if="{{repeatType === 'weekly'}}">
+          <text class="field-label"><text class="required">*</text>重复星期</text>
+          <view class="weekday-options">
+            <view class="weekday-option {{item.selected ? 'active' : ''}}" wx:for="{{weekdayOptions}}" wx:key="value"
+              data-day="{{item.value}}" bindtap="onWeekdayTap">{{item.label}}</view>
+          </view>
+          <text class="field-error-hint" wx:if="{{repeatWeekdays.length === 0}}">请至少选择一天</text>
+        </view>
+
+        <view class="field-block" wx:if="{{repeatType === 'monthly'}}">
+          <text class="field-label"><text class="required">*</text>每月第 X 日</text>
+          <view class="monthly-day-row">
+            <text>每月第</text>
+            <input class="day-input" type="number" maxlength="2" value="{{repeatDay}}" bindinput="onRepeatDayInput" />
+            <text>日</text>
+          </view>
+          <text class="month-skip-hint" wx:if="{{showMonthSkipHint}}">没有该日期的月份将自动跳过</text>
+        </view>
       </view>
 
       <view class="time-row">
@@ -56,6 +109,7 @@
       </view>
     </view>
 
+    <view class="stop-button" wx:if="{{editMode && repeatType !== 'none'}}" bindtap="onStopRepeat">{{stopping ? '处理中...' : '停止重复'}}</view>
     <view class="delete-button" wx:if="{{editMode}}" bindtap="onDelete">删除事项</view>
     <view class="bottom-space"></view>
     <view class="save-bar">

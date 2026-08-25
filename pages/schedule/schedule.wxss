@@ -29,19 +29,31 @@
 .empty-day-hint { color: #AEB4BC; font-size: 24rpx; margin-top: 12rpx; }
 .schedule-item { display: flex; align-items: center; min-height: 104rpx; padding: 18rpx 4rpx; border-bottom: 1rpx solid #F0F1F3; }
 .schedule-item:last-child { border-bottom: none; }
-.toggle-button { width: 58rpx; height: 58rpx; flex-shrink: 0; border-radius: 50%; display: flex; align-items: center; justify-content: center; margin-right: 18rpx; font-size: 34rpx; color: #E6A23C; background: #FFF7E8; }
-.toggle-button.checkin { color: #5B8FF9; background: #EDF4FF; }
-.toggle-button.checked { color: #fff; background: #52B788; }
+.toggle-button { width: 58rpx; height: 58rpx; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-right: 18rpx; }
+.todo-checkbox { position: relative; width: 34rpx; height: 34rpx; box-sizing: border-box; border: 3rpx solid #D99B38; border-radius: 8rpx; background: transparent; }
+.checkin-circle { position: relative; width: 36rpx; height: 36rpx; box-sizing: border-box; border: 3rpx solid #5B8FF9; border-radius: 50%; background: transparent; }
+.checkin-dot { position: absolute; left: 50%; top: 50%; width: 8rpx; height: 8rpx; border-radius: 50%; background: #5B8FF9; transform: translate(-50%, -50%); }
+.css-checkmark { display: none; position: absolute; left: 10rpx; top: 4rpx; width: 9rpx; height: 17rpx; box-sizing: border-box; border-right: 4rpx solid #fff; border-bottom: 4rpx solid #fff; transform: rotate(45deg); }
+.toggle-button.todo.checked .todo-checkbox { border-color: #52B788; background: #52B788; }
+.toggle-button.checkin.checked .checkin-circle { border-color: #52B788; background: #52B788; }
+.toggle-button.checked .css-checkmark { display: block; }
+.toggle-button.checkin.checked .checkin-dot { display: none; }
 .time-column { width: 116rpx; flex-shrink: 0; margin-right: 12rpx; }
 .time-text { color: #FF6B81; font-size: 25rpx; font-weight: 600; }
 .item-main { flex: 1; min-width: 0; }
 .item-topline { display: flex; align-items: center; gap: 12rpx; }
 .item-title { color: #25282D; font-size: 29rpx; font-weight: 550; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.completed .item-title { color: #9AA0A6; text-decoration: line-through; }
+.completed .item-title { color: #8D949D; }
+.todo-completed .item-title { text-decoration: line-through; }
+.owner-tag { flex-shrink: 0; padding: 4rpx 12rpx; border-radius: 13rpx; color: #AD4860; background: #FFF0F4; font-size: 20rpx; }
+.owner-tag.mine { color: #376DAE; background: #EDF5FF; }
+.owner-tag.partner { color: #7655A8; background: #F4EFFF; }
+.owner-tag.couple { color: #AD4860; background: #FFF0F4; }
 .type-tag { flex-shrink: 0; padding: 4rpx 12rpx; border-radius: 14rpx; font-size: 20rpx; color: #FF6B81; background: #FFF0F2; }
 .type-tag.todo { color: #B7791F; background: #FFF7E8; }
 .type-tag.checkin { color: #3D72C8; background: #EDF4FF; }
-.item-time-mobile, .item-note, .item-state { display: block; margin-top: 7rpx; font-size: 23rpx; color: #8B919A; }
+.item-time-mobile, .item-note, .item-state, .repeat-meta { display: block; margin-top: 7rpx; font-size: 23rpx; color: #8B919A; }
+.repeat-meta { color: #A07543; font-size: 21rpx; }
 .item-note { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .item-state { color: #52A675; }
 .item-arrow { color: #C4C8CE; font-size: 38rpx; margin-left: 10rpx; }

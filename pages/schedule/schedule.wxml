@@ -39,20 +39,24 @@
     </view>
 
     <view class="schedule-list" wx:else>
-      <view class="schedule-item {{item.completed ? 'completed' : ''}}" wx:for="{{selectedList}}" wx:key="_id"
-        data-id="{{item._id}}" bindtap="onEditItem">
+      <view class="schedule-item {{item.completed ? 'completed' : ''}} {{item.type === 'todo' && item.completed ? 'todo-completed' : ''}}" wx:for="{{selectedList}}" wx:key="instanceKey"
+        data-schedule-id="{{item.scheduleId}}" bindtap="onEditItem">
         <view class="toggle-button {{item.typeClass}} {{item.completed ? 'checked' : ''}}" wx:if="{{item.type !== 'schedule'}}"
-          data-id="{{item._id}}" data-completed="{{item.completed}}" catchtap="onToggle">
-          <text>{{item.completed ? '✓' : (item.type === 'todo' ? '□' : '○')}}</text>
+          data-schedule-id="{{item.scheduleId}}" data-occurrence-date="{{item.occurrenceDate}}" data-instance-key="{{item.instanceKey}}"
+          data-completed="{{item.completed}}" catchtap="onToggle">
+          <view class="todo-checkbox" wx:if="{{item.type === 'todo'}}"><view class="css-checkmark"></view></view>
+          <view class="checkin-circle" wx:else><view class="checkin-dot"></view><view class="css-checkmark"></view></view>
         </view>
         <view class="time-column" wx:else>
           <text class="time-text">{{item.timeText || '全天'}}</text>
         </view>
         <view class="item-main">
           <view class="item-topline">
+            <text class="owner-tag {{item.ownerClass}}">{{item.ownerLabel}}</text>
             <text class="item-title">{{item.title}}</text>
             <text class="type-tag {{item.typeClass}}">{{item.typeText}}</text>
           </view>
+          <text class="repeat-meta" wx:if="{{item.repeatText}}">{{item.repeatText}}重复</text>
           <text class="item-time-mobile" wx:if="{{item.type !== 'schedule' && item.timeText}}">{{item.timeText}}</text>
           <text class="item-note" wx:if="{{item.note}}">{{item.note}}</text>
           <text class="item-state" wx:if="{{item.stateText}}">{{item.stateText}}{{item.completedHint ? ' · ' + item.completedHint : ''}}</text>

@@ -11,17 +11,34 @@
 .type-name { font-size: 28rpx; font-weight: 600; }
 .type-hint { margin-top: 7rpx; color: #9AA0A6; font-size: 19rpx; line-height: 1.35; }
 .type-option.active .type-hint { color: #D97989; }
+.segment-options { display: flex; padding: 6rpx; gap: 6rpx; border-radius: 18rpx; background: #F4F5F7; }
+.segment-option { flex: 1; height: 68rpx; display: flex; align-items: center; justify-content: center; border-radius: 14rpx; color: #737982; font-size: 25rpx; }
+.segment-option.active { color: #FF607A; background: #fff; font-weight: 650; box-shadow: 0 3rpx 10rpx rgba(31, 35, 41, .08); }
+.repeat-edit-hint { display: block; margin-top: 14rpx; color: #A07543; font-size: 22rpx; line-height: 1.5; }
 .text-input, .picker-row, .note-input { box-sizing: border-box; width: 100%; background: #F7F8FA; border-radius: 16rpx; color: #25282D; font-size: 28rpx; }
 .text-input { height: 88rpx; padding: 0 24rpx; }
 .picker-row { height: 88rpx; padding: 0 24rpx; display: flex; align-items: center; justify-content: space-between; }
 .placeholder { color: #B8BEC6; }
 .arrow { color: #B8BEC6; font-size: 35rpx; }
+.repeat-fields { margin-bottom: 34rpx; }
+.date-range-row { display: flex; gap: 16rpx; margin-bottom: 30rpx; }
+.date-range-field { flex: 1; min-width: 0; }
+.picker-row.compact { padding: 0 16rpx; font-size: 24rpx; }
+.weekday-options { display: flex; flex-wrap: wrap; gap: 12rpx; }
+.weekday-option { width: calc((100% - 36rpx) / 4); height: 64rpx; box-sizing: border-box; display: flex; align-items: center; justify-content: center; border: 2rpx solid #E5E8EC; border-radius: 16rpx; color: #6F7680; background: #FAFBFC; font-size: 24rpx; }
+.weekday-option.active { color: #FF607A; border-color: #FF9CAD; background: #FFF2F5; font-weight: 600; }
+.field-error-hint { display: block; margin-top: 12rpx; color: #F0483E; font-size: 22rpx; }
+.monthly-day-row { height: 88rpx; padding: 0 24rpx; display: flex; align-items: center; gap: 14rpx; border-radius: 16rpx; color: #4B5159; background: #F7F8FA; font-size: 27rpx; }
+.day-input { width: 100rpx; height: 60rpx; text-align: center; border-radius: 12rpx; color: #25282D; background: #fff; font-size: 29rpx; }
+.month-skip-hint { display: block; margin-top: 12rpx; color: #A07543; font-size: 22rpx; }
 .time-row { display: flex; gap: 18rpx; margin-bottom: 34rpx; }
 .time-field { flex: 1; min-width: 0; position: relative; padding-bottom: 38rpx; }
 .clear-time { position: absolute; right: 4rpx; bottom: 0; color: #FF6B81; font-size: 22rpx; padding: 8rpx; }
 .note-input { min-height: 190rpx; padding: 22rpx 24rpx 48rpx; line-height: 1.6; }
 .counter { position: absolute; right: 18rpx; bottom: 14rpx; color: #B8BEC6; font-size: 21rpx; }
-.delete-button { height: 82rpx; margin: 26rpx 12rpx 0; border: 2rpx solid #F2B8B3; border-radius: 41rpx; color: #F0483E; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 28rpx; }
+.stop-button, .delete-button { height: 82rpx; margin: 26rpx 12rpx 0; border-radius: 41rpx; background: #fff; display: flex; align-items: center; justify-content: center; font-size: 28rpx; }
+.stop-button { border: 2rpx solid #EDC58F; color: #A66A1D; }
+.delete-button { border: 2rpx solid #F2B8B3; color: #F0483E; }
 .bottom-space { height: 30rpx; }
 .save-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 20; padding: 18rpx 28rpx calc(18rpx + env(safe-area-inset-bottom)); background: #fff; box-shadow: 0 -4rpx 16rpx rgba(31, 35, 41, .05); }
 .save-button { height: 88rpx; border-radius: 44rpx; background: #FF6B81; color: #fff; font-size: 31rpx; font-weight: 600; display: flex; align-items: center; justify-content: center; }

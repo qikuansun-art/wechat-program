@@ -28,7 +28,22 @@ exports.main = async (event = {}) => {
     if (!schedule || !auth.userIds.includes(schedule.creatorId)) {
       return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
     }
+    const recurring = ['daily', 'weekly', 'monthly'].includes(schedule.repeatType);
     await ref.remove();
+    if (recurring) {
+      try {
+        const completions = db.collection('schedule_completions');
+        // 规则已删除后，残留 completion 不再能被查询或操作；逐条清理失败仅记录日志。
+        while (true) {
+          const res = await completions.where({ scheduleId: id }).limit(100).get();
+          if (!res.data.length) break;
+          await Promise.all(res.data.map((item) => completions.doc(item._id).remove()));
+          if (res.data.length < 100) break;
+        }
+      } catch (cleanupError) {
+        console.error('[deleteSchedule] completion cleanup failed:', cleanupError && (cleanupError.errMsg || cleanupError.message || cleanupError));
+      }
+    }
     return { success: true };
   } catch (err) {
     console.error('[deleteSchedule] failed:', err && (err.errMsg || err.message || err));

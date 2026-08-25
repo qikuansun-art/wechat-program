@@ -1,4 +1,4 @@
-// 云函数：getScheduleDetail —— 查询当前绑定双方的一条日程
+// 云函数：getScheduleDetail —— 查询并规范化一条日程
 const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
@@ -10,12 +10,22 @@ async function getBoundUser(openid) {
   const me = res.data[0];
   if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣' } };
   const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
-  if (!partnerRes || !partnerRes.data || partnerRes.data.partnerId !== me._id) {
-    return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
-  }
+  if (!partnerRes || !partnerRes.data || partnerRes.data.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
   return { me, userIds: [me._id, me.partnerId] };
 }
-
+function normalize(schedule, me) {
+  const ownerType = schedule.ownerType === 'personal' ? 'personal' : 'couple';
+  const ownerId = ownerType === 'personal' ? (schedule.ownerId || null) : null;
+  const repeatType = ['daily', 'weekly', 'monthly'].includes(schedule.repeatType) ? schedule.repeatType : 'none';
+  return Object.assign({}, schedule, {
+    ownerType, ownerId, ownerLabel: ownerType === 'couple' ? '双人' : (ownerId === me._id ? '我的' : 'TA'),
+    repeatType, date: repeatType === 'none' ? (schedule.date || null) : null,
+    repeatStartDate: repeatType === 'none' ? null : (schedule.repeatStartDate || null),
+    repeatEndDate: repeatType === 'none' ? null : (schedule.repeatEndDate || null),
+    repeatWeekdays: repeatType === 'weekly' && Array.isArray(schedule.repeatWeekdays) ? schedule.repeatWeekdays : [],
+    repeatDay: repeatType === 'monthly' ? (schedule.repeatDay || null) : null
+  });
+}
 exports.main = async (event = {}) => {
   try {
     const auth = await getBoundUser(cloud.getWXContext().OPENID);
@@ -24,10 +34,8 @@ exports.main = async (event = {}) => {
     if (!id) return { success: false, code: 'INVALID_ID', msg: '事项参数不正确' };
     const res = await db.collection('schedules').doc(id).get().catch(() => null);
     const schedule = res && res.data;
-    if (!schedule || !auth.userIds.includes(schedule.creatorId)) {
-      return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
-    }
-    return { success: true, schedule };
+    if (!schedule || !auth.userIds.includes(schedule.creatorId)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
+    return { success: true, schedule: normalize(schedule, auth.me) };
   } catch (err) {
     console.error('[getScheduleDetail] failed:', err && (err.errMsg || err.message || err));
     return { success: false, code: 'QUERY_FAILED', msg: '查询失败，请重试' };
