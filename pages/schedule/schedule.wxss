@@ -30,12 +30,16 @@
 .schedule-item { display: flex; align-items: center; min-height: 104rpx; padding: 18rpx 4rpx; border-bottom: 1rpx solid #F0F1F3; }
 .schedule-item:last-child { border-bottom: none; }
 .toggle-button { width: 58rpx; height: 58rpx; flex-shrink: 0; display: flex; align-items: center; justify-content: center; margin-right: 18rpx; }
+.schedule-complete-icon { position: relative; width: 38rpx; height: 34rpx; box-sizing: border-box; border: 3rpx solid #FF7188; border-radius: 9rpx; background: transparent; }
+.schedule-icon-line { position: absolute; left: 5rpx; right: 5rpx; top: 9rpx; height: 3rpx; border-radius: 2rpx; background: #FF9CAD; }
 .todo-checkbox { position: relative; width: 34rpx; height: 34rpx; box-sizing: border-box; border: 3rpx solid #D99B38; border-radius: 8rpx; background: transparent; }
 .checkin-circle { position: relative; width: 36rpx; height: 36rpx; box-sizing: border-box; border: 3rpx solid #5B8FF9; border-radius: 50%; background: transparent; }
 .checkin-dot { position: absolute; left: 50%; top: 50%; width: 8rpx; height: 8rpx; border-radius: 50%; background: #5B8FF9; transform: translate(-50%, -50%); }
 .css-checkmark { display: none; position: absolute; left: 10rpx; top: 4rpx; width: 9rpx; height: 17rpx; box-sizing: border-box; border-right: 4rpx solid #fff; border-bottom: 4rpx solid #fff; transform: rotate(45deg); }
 .toggle-button.todo.checked .todo-checkbox { border-color: #52B788; background: #52B788; }
 .toggle-button.checkin.checked .checkin-circle { border-color: #52B788; background: #52B788; }
+.toggle-button.schedule.checked .schedule-complete-icon { border-color: #52B788; background: #52B788; }
+.toggle-button.schedule.checked .schedule-icon-line { display: none; }
 .toggle-button.checked .css-checkmark { display: block; }
 .toggle-button.checkin.checked .checkin-dot { display: none; }
 .time-column { width: 116rpx; flex-shrink: 0; margin-right: 12rpx; }

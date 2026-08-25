@@ -53,8 +53,7 @@ exports.main = async (event = {}) => {
     const res = await ref.get().catch(() => null);
     const schedule = res && res.data;
     if (!schedule || !auth.userIds.includes(schedule.creatorId)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
-    if (schedule.type === 'schedule') return { success: false, code: 'TYPE_NOT_TOGGLEABLE', msg: '日程类型不支持完成操作' };
-    if (schedule.type !== 'todo' && schedule.type !== 'checkin') return { success: false, code: 'INVALID_TYPE', msg: '事项类型异常' };
+    if (!['schedule', 'todo', 'checkin'].includes(schedule.type)) return { success: false, code: 'INVALID_TYPE', msg: '事项类型异常' };
     const repeatType = ['daily', 'weekly', 'monthly'].includes(schedule.repeatType) ? schedule.repeatType : 'none';
     const recurring = repeatType !== 'none';
     const occurrenceDate = typeof event.occurrenceDate === 'string' && event.occurrenceDate.trim() ? event.occurrenceDate.trim() : (recurring ? '' : schedule.date);

@@ -524,7 +524,16 @@ function assert(cond, msg) {
   assert(!foreignEdit.success && foreignEdit.code === 'NOT_FOUND', '日程编辑：另一对绑定用户不能编辑');
 
   const scheduleToggle = await callAs(B, 'toggleSchedule', { id: scheduleCreated.id, completed: true });
-  assert(!scheduleToggle.success && scheduleToggle.code === 'TYPE_NOT_TOGGLEABLE', '日程状态：schedule 不能 toggle');
+  assert(scheduleToggle.success && scheduleToggle.schedule.completed && scheduleToggle.schedule.completedBy === scheduleUserB()._id,
+    '日程状态：普通 schedule 可以完成且完成者由服务端生成');
+  const editedCompletedSchedule = await callAs(A, 'saveSchedule', {
+    id: scheduleCreated.id, type: 'schedule', title: '一起吃晚饭（已改）', date: '2026-08-24', startTime: '19:00', endTime: '20:00'
+  });
+  assert(editedCompletedSchedule.success && editedCompletedSchedule.schedule.completed && editedCompletedSchedule.schedule.completedBy === scheduleUserB()._id,
+    '日程编辑：普通 schedule 编辑内容时保留服务端完成状态');
+  const scheduleCancel = await callAs(A, 'toggleSchedule', { id: scheduleCreated.id, completed: false });
+  assert(scheduleCancel.success && !scheduleCancel.schedule.completed && scheduleCancel.schedule.completedBy === '',
+    '日程状态：普通 schedule 可以取消完成');
   const todoComplete = await callAs(A, 'toggleSchedule', { id: todoCreated.id, completed: true, completedBy: scheduleUserI()._id });
   assert(todoComplete.success && todoComplete.schedule.completed && todoComplete.schedule.completedBy === scheduleUserA()._id,
     '日程状态：todo 正常完成，完成者由服务端确定');
@@ -637,7 +646,12 @@ function assert(cond, msg) {
     'V2 完成：范围外、weekly 非规则日、monthly 非规则日全部拒绝');
   const recurringSchedule = await callAs(A, 'saveSchedule', { type: 'schedule', title: '循环约会', repeatType: 'daily', repeatStartDate: '2026-09-01', repeatEndDate: '2026-09-02' });
   const recurringScheduleToggle = await callAs(A, 'toggleSchedule', { id: recurringSchedule.id, occurrenceDate: '2026-09-01', completed: true });
-  assert(!recurringScheduleToggle.success && recurringScheduleToggle.code === 'TYPE_NOT_TOGGLEABLE', 'V2 完成：循环 schedule 仍拒绝 toggle');
+  const recurringScheduleDay1 = await callAs(B, 'getSchedules', { date: '2026-09-01' });
+  const recurringScheduleDay2 = await callAs(B, 'getSchedules', { date: '2026-09-02' });
+  assert(recurringScheduleToggle.success && recurringScheduleToggle.schedule.completed &&
+    recurringScheduleDay1.list.find((item) => item.scheduleId === recurringSchedule.id).completed &&
+    !recurringScheduleDay2.list.find((item) => item.scheduleId === recurringSchedule.id).completed,
+    'V2 完成：循环 schedule 按 occurrence 独立完成，不影响下一实例');
   const cancelRecurring = await callAs(B, 'toggleSchedule', { id: daily.id, occurrenceDate: '2026-09-01', completed: false });
   assert(cancelRecurring.success && !store.schedule_completions.some((item) => item.scheduleId === daily.id && item.occurrenceDate === '2026-09-01'), 'V2 完成：取消完成删除 completion');
 
@@ -715,8 +729,9 @@ function assert(cond, msg) {
   assert(editJs.includes("name: 'saveSchedule'") && editJs.includes("name: 'getScheduleDetail'") &&
     scheduleJs.includes("name: 'toggleSchedule'") && editJs.includes("name: 'deleteSchedule'"),
     '日程页面：5 个后端接口均完成前端接入');
-  assert(scheduleWxml.includes("item.type !== 'schedule'") && scheduleWxml.includes('catchtap="onToggle"'),
-    '日程主页：schedule 无完成入口，todo/checkin 提供完成入口');
+  assert(scheduleWxml.includes('schedule-complete-icon') && scheduleWxml.includes('todo-checkbox') &&
+    scheduleWxml.includes('checkin-circle') && scheduleWxml.includes('catchtap="onToggle"'),
+    '日程主页：schedule/todo/checkin 均提供区分明确的完成入口');
   assert(editJs.includes('wx.showModal') && editJs.includes('modalResult.confirm'), '日程编辑：删除前有二次确认');
   assert(scheduleJs.includes("result.code === 'NOT_BOUND'") && scheduleWxml.includes('请先绑定') === false &&
     scheduleWxml.includes('bindtap="onGoBind"'), '日程主页：NOT_BOUND 使用明确动态文案并提供去绑定入口');
@@ -767,6 +782,8 @@ function assert(cond, msg) {
     'V2 图标：存在 WXSS checkbox 与 CSS 勾号');
   assert(scheduleWxml.includes('checkin-circle') && scheduleWxss.includes('.checkin-circle') && scheduleWxss.includes('.checkin-dot') &&
     scheduleWxss.includes('.toggle-button.checkin.checked'), 'V2 图标：存在圆形打卡按钮及完成状态');
+  assert(scheduleWxml.includes('schedule-complete-icon') && scheduleWxss.includes('.schedule-complete-icon') &&
+    scheduleWxss.includes('.toggle-button.schedule.checked'), 'V2 图标：schedule 存在独立日历完成按钮及实心状态');
   assert(scheduleWxss.includes('.todo-completed .item-title') && !scheduleWxss.includes('.completed .item-title { color: #9AA0A6; text-decoration: line-through;'),
     'V2 完成样式：只有 todo 使用删除线，checkin 保留完成者展示');
 

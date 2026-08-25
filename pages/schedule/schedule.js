@@ -14,6 +14,7 @@ function enrichItem(item) {
   const scheduleId = item.scheduleId || item._id;
   const instanceKey = item.instanceKey || `${scheduleId}:${occurrenceDate}`;
   let stateText = '';
+  if (item.type === 'schedule') stateText = item.completed ? '已完成' : '待完成';
   if (item.type === 'todo') stateText = item.completed ? '已完成' : '待完成';
   if (item.type === 'checkin') stateText = item.completed ? '已打卡' : '待打卡';
   return Object.assign({}, item, {

@@ -94,7 +94,7 @@ exports.main = async (event = {}) => {
     if (!existing || !auth.userIds.includes(existing.creatorId)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
     const previousRepeatType = existing.repeatType || 'none';
     const update = Object.assign({}, checked.value, { updatedAt: now, updatedBy: auth.me._id });
-    if (previousRepeatType !== checked.value.repeatType || checked.value.type === 'schedule') {
+    if (previousRepeatType !== checked.value.repeatType || (checked.value.type === 'schedule' && existing.type !== 'schedule')) {
       Object.assign(update, { completed: false, completedBy: '', completedByName: '', completedAt: null });
     }
     await schedules.doc(id).update({ data: update });

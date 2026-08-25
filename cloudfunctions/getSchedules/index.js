@@ -108,7 +108,7 @@ exports.main = async (event = {}) => {
       eachDate(start, end, (date) => { if (isOccurrence(rule, date)) list.push(makeInstance(rule, date)); });
     });
     if (list.length > MAX_OCCURRENCES) return { success: false, code: 'TOO_MANY_RESULTS', msg: '查询范围内事项过多，请缩小范围' };
-    const completionTargets = list.filter((item) => item.isRecurring && item.type !== 'schedule');
+    const completionTargets = list.filter((item) => item.isRecurring);
     if (completionTargets.length) {
       const ids = Array.from(new Set(completionTargets.map((item) => item.scheduleId)));
       const completionRes = await db.collection('schedule_completions').where({
