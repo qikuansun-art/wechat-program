@@ -50,24 +50,34 @@ Page({
 
   /** 刷新（第一页） */
   async refresh() {
-    this.setData({ loading: true, page: 0, hasMore: true, list: [] });
-    await this.fetchPage(0);
-    this.setData({ loading: false });
+    const requestId = (this._requestId || 0) + 1;
+    this._requestId = requestId;
+    this.setData({ loading: true, loadingMore: false, page: 0, hasMore: true, list: [] });
+    await this.fetchPage(0, requestId);
+    if (requestId === this._requestId) this.setData({ loading: false });
   },
 
   /** 加载更多 */
   async loadMore() {
     if (this.data.loadingMore || !this.data.hasMore || this.data.loading) return;
     const nextPage = this.data.page + 1;
-    await this.fetchPage(nextPage);
+    const requestId = this._requestId || 0;
+    this.setData({ loadingMore: true });
+    try {
+      await this.fetchPage(nextPage, requestId);
+    } finally {
+      if (requestId === this._requestId) this.setData({ loadingMore: false });
+    }
   },
 
   /** 请求一页数据 */
-  async fetchPage(page) {
+  async fetchPage(page, requestId) {
     const app = getApp();
     await app.ensureLogin();
+    if (requestId !== this._requestId) return;
     // 在异步调用前快照当前角色与用户信息，防止切换标签时竞态
     const role = this.data.activeRole;
+    const status = this.data.activeStatus;
     const myOpenid = app.globalData.openid;
     const myId = app.globalData.userInfo && app.globalData.userInfo._id;
     try {
@@ -75,11 +85,12 @@ Page({
         name: 'getReports',
         data: {
           role,
-          status: this.data.activeStatus,
+          status,
           page,
           pageSize: 20
         }
       });
+      if (requestId !== this._requestId) return;
       const result = res.result || {};
       const isCreator = role === 'creator';
       // 客户端安全过滤：确保数据隔离，防止服务端返回交叉数据
@@ -103,6 +114,7 @@ Page({
         hasMore: !!(result.hasMore)
       });
     } catch (err) {
+      if (requestId !== this._requestId) return;
       console.error('加载记录失败', err);
     }
   },

@@ -89,7 +89,9 @@ exports.main = async (event = {}) => {
     const schedules = db.collection('schedules');
     const normalPromise = schedules.where({ creatorId: _.in(auth.userIds), date: _.gte(range.startDate).and(_.lte(range.endDate)) }).limit(MAX_RULES + 1).get();
     const recurringPromises = RECURRING_TYPES.map((repeatType) => schedules.where({
-      creatorId: _.in(auth.userIds), repeatType, repeatStartDate: _.lte(range.endDate)
+      creatorId: _.in(auth.userIds), repeatType,
+      repeatStartDate: _.lte(range.endDate),
+      repeatEndDate: _.gte(range.startDate)
     }).limit(MAX_RULES + 1).get());
     const queryResults = await Promise.all([normalPromise].concat(recurringPromises));
     if (queryResults.some((result) => result.data.length > MAX_RULES)) return { success: false, code: 'TOO_MANY_RULES', msg: '日程规则过多，请减少后再查看' };

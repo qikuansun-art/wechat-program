@@ -602,15 +602,23 @@ function assert(cond, msg) {
   const monthly29 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月29', repeatType: 'monthly', repeatStartDate: '2028-02-01', repeatEndDate: '2028-02-29', repeatDay: 29 });
   const monthly30 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月30', repeatType: 'monthly', repeatStartDate: '2026-09-01', repeatEndDate: '2026-10-31', repeatDay: 30 });
   const monthly31 = await callAs(A, 'saveSchedule', { type: 'todo', title: '每月31', repeatType: 'monthly', repeatStartDate: '2026-09-01', repeatEndDate: '2026-10-31', repeatDay: 31 });
+  const expiredDaily = await callAs(A, 'saveSchedule', { type: 'todo', title: '已结束循环', repeatType: 'daily', repeatStartDate: '2026-08-01', repeatEndDate: '2026-08-31' });
   const invalidRepeatRange = await callAs(A, 'saveSchedule', { type: 'todo', title: '倒置范围', repeatType: 'daily', repeatStartDate: '2026-09-02', repeatEndDate: '2026-09-01' });
   assert(daily.success && daily.schedule.date === null && deepEqual(daily.schedule.repeatWeekdays, []) && daily.schedule.repeatDay === null, 'V2 循环：daily 严格清洗无关字段');
   assert(weekly.success && deepEqual(weekly.schedule.repeatWeekdays, [2, 4]) && weekly.schedule.repeatDay === null, 'V2 循环：weekly 星期去重并升序');
   assert(monthly28.success && monthly29.success && monthly30.success && monthly31.success, 'V2 循环：monthly 支持 28/29/30/31');
+  assert(expiredDaily.success, '性能优化：可创建查询区间前已经结束的循环规则');
   assert(!invalidRepeatRange.success && invalidRepeatRange.code === 'INVALID_REPEAT_RANGE', 'V2 循环：start > end 被拒绝');
 
   const septemberV2 = await callAs(A, 'getSchedules', { year: 2026, month: 9 });
+  const getSchedulesSource = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'getSchedules', 'index.js'), 'utf8');
+  assert(getSchedulesSource.includes('repeatStartDate: _.lte(range.endDate)') &&
+    getSchedulesSource.includes('repeatEndDate: _.gte(range.startDate)') &&
+    getSchedulesSource.includes('if (rule.repeatEndDate < range.startDate) return'),
+    '性能优化：循环查询在数据库层限制起止交集并保留服务端防御过滤');
   const dailyDates = septemberV2.list.filter((item) => item.scheduleId === daily.id).map((item) => item.occurrenceDate);
   const weeklyDates = septemberV2.list.filter((item) => item.scheduleId === weekly.id).map((item) => item.occurrenceDate);
+  assert(!septemberV2.list.some((item) => item.scheduleId === expiredDaily.id), '性能优化：已结束循环规则不会生成查询区间内实例');
   assert(septemberV2.success && septemberV2.list.some((item) => item.scheduleId === personalMine.id) && dailyDates.join(',') === '2026-09-01,2026-09-02',
     'V2 查询：月查询混合普通事项和跨月 daily，并包含起止边界');
   assert(weeklyDates.join(',') === '2026-09-01,2026-09-03,2026-09-08,2026-09-10', 'V2 循环：weekly 多星期按 ISO 1=周一规则展开');
@@ -771,8 +779,13 @@ function assert(cond, msg) {
   assert(editJs.includes('删除后，整个重复事项及其完成记录都将移除，无法恢复。'), 'V2 删除：循环规则使用明确删除确认文案');
   assert(scheduleJs.includes('item.occurrenceDate || item.date') && scheduleJs.includes('dateMap[item.occurrenceDate]') &&
     scheduleWxml.includes('wx:key="instanceKey"'), 'V2 日程主页：occurrenceDate 分组并使用 instanceKey 唯一渲染');
-  assert(scheduleJs.includes('itemKey === instanceKey') && scheduleJs.includes('data: { id, occurrenceDate, completed: !completed }') &&
+  assert(scheduleJs.includes('item.instanceKey === instanceKey') && scheduleJs.includes('data: { id, occurrenceDate, completed: !completed }') &&
     scheduleWxml.includes('data-occurrence-date="{{item.occurrenceDate}}"'), 'V2 toggle：携带 occurrenceDate 并按 instanceKey 精确更新本地实例');
+  const scheduleToggleBody = scheduleJs.slice(scheduleJs.indexOf('async onToggle'), scheduleJs.indexOf('onRetry()'));
+  assert(scheduleToggleBody.includes('this._dateMap[occurrenceDate]') && scheduleToggleBody.includes('selectedList[${selectedIndex}]') &&
+    !scheduleToggleBody.includes('applyMonthList('), '性能优化：toggle 只同步当前 instanceKey 与选中日列表');
+  assert(!scheduleToggleBody.includes('loadCurrentMonth(') && !scheduleToggleBody.includes('rebuildCalendar(') &&
+    !scheduleToggleBody.includes('calendar.buildMonth'), '性能优化：toggle 不重新请求整月且不重建 42 格月历');
   assert(scheduleWxml.includes('owner-tag') && scheduleWxml.indexOf('owner-tag') < scheduleWxml.indexOf('type-tag') &&
     scheduleWxml.includes('{{item.ownerLabel}}'), 'V2 卡片：归属标签显示在事项类型之前');
   assert(scheduleWxml.includes('repeat-meta') && scheduleWxml.includes('{{item.repeatText}}重复'), 'V2 卡片：展示轻量循环标识');
@@ -848,6 +861,14 @@ function assert(cond, msg) {
     /bottom:\s*calc\(120rpx\s*\+\s*env\(safe-area-inset-bottom\)\)/.test(recordWxss), '报备记录页：按钮 fixed 定位于 TabBar 和安全区上方');
   assert(/\.page\s*\{[^}]*padding-bottom:\s*calc\(220rpx\s*\+\s*env\(safe-area-inset-bottom\)\)/s.test(recordWxss),
     '报备记录页：列表预留底部空间避免遮挡最后一条');
+  assert(recordJs.includes('const requestId = (this._requestId || 0) + 1') &&
+    (recordJs.match(/requestId !== this\._requestId/g) || []).length >= 3,
+    '性能优化：record refresh 生成请求版本，登录后、响应后和异常路径均丢弃旧请求');
+  assert(recordJs.includes('this.setData({ loadingMore: true })') && recordJs.includes('this.setData({ loadingMore: false })') &&
+    recordJs.includes('if (this.data.loadingMore || !this.data.hasMore || this.data.loading) return'),
+    '性能优化：record 翻页期间启用 loadingMore 单请求锁并在结束后恢复');
+  assert(recordJs.includes('const role = this.data.activeRole') && recordJs.includes('const status = this.data.activeStatus') &&
+    recordJs.includes('this.fetchPage(0, requestId)'), '性能优化：角色和状态切换后的请求使用同一版本快照，旧结果不能覆盖新筛选');
 
   // ---------- Banner 原子同步与受控访问 ----------
   console.log('\n== Banner 原子同步与受控访问 ==');
@@ -922,11 +943,23 @@ function assert(cond, msg) {
   console.log('\n== 账单固定入口结构 ==');
   const billWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.wxml'), 'utf8');
   const billWxss = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.wxss'), 'utf8');
+  const billJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.js'), 'utf8');
   assert((billWxml.match(/bindtap="onAdd"/g) || []).length === 1 && billWxml.includes('class="add-fab"'),
     '账单入口：原底部重复入口已移除，悬浮按钮仍绑定 onAdd');
   assert(/\.add-fab\s*\{[^}]*position:\s*fixed;/s.test(billWxss) && /safe-area-inset-bottom/.test(billWxss),
     '账单入口：fixed 定位并兼顾底部安全区');
   assert(/\.page\s*\{[^}]*padding-bottom:\s*calc\(/s.test(billWxss), '账单列表：保留足够 bottom padding 避免遮挡最后一条');
+  assert(billJs.includes('const requestId = ++this._billRequestId') &&
+    (billJs.match(/requestId !== this\._billRequestId/g) || []).length >= 2,
+    '性能优化：bill 月份请求只允许当前 requestId 更新成功或失败状态');
+  assert(!billJs.includes('allBills: []') && !billJs.includes('this.data.allBills') &&
+    billJs.includes('this._allBills = bills') && billJs.includes('const allBills = this._allBills || []'),
+    '性能优化：完整原始账单仅保存在页面实例，不进入页面 data');
+  assert(billJs.includes("filterType !== 'all'") && billJs.includes('b.creatorId === filterPerson') &&
+    billJs.includes('catMap[b.category]') && billJs.includes('personMap[b.creatorId]'),
+    '性能优化：类型/人员筛选及分类/人员统计继续基于完整原始账单');
+  assert(billJs.includes("months.map((ym) =>") && billJs.includes("name: 'getBills'") && billJs.includes('parseAndImportCSV'),
+    '性能优化：CSV 导入导出仍保留完整独立数据路径');
 
   // ---------- 记账 ----------
   console.log('\n== 记账（共享账本） ==');

@@ -34,7 +34,6 @@ Page({
     filterPerson: '',      // '' = 全部 | creatorId
     filterPersonText: '',
     // 数据
-    allBills: [],          // 当月全部账单（原始）
     filteredList: [],      // 筛选后
     catIconMap: {},
     catNameMap: {},
@@ -43,6 +42,8 @@ Page({
   },
 
   onLoad() {
+    this._allBills = [];
+    this._billRequestId = 0;
     const catIconMap = {};
     const catNameMap = {};
     billCategories.EXPENSE_CATEGORIES.concat(billCategories.INCOME_CATEGORIES).forEach((c) => {
@@ -64,22 +65,26 @@ Page({
 
   /** 加载当月账单 */
   async loadData() {
+    const requestId = ++this._billRequestId;
+    const yearMonth = this.data.yearMonth;
     this.setData({ loading: true });
     try {
       const res = await wx.cloud.callFunction({
         name: 'getBills',
-        data: { yearMonth: this.data.yearMonth }
+        data: { yearMonth }
       });
+      if (requestId !== this._billRequestId) return;
       const result = res.result || {};
       if (result.success === false) {
-        this.setData({ loading: false, notBound: true, allBills: [], filteredList: [], dimList: [] });
+        this._allBills = [];
+        this.setData({ loading: false, notBound: true, filteredList: [], dimList: [] });
         return;
       }
       const bills = result.list || [];
-      this.setData({ notBound: false, allBills: bills });
-      this.applyFilterAndStats();
-      this.setData({ loading: false });
+      this._allBills = bills;
+      this.applyFilterAndStats({ notBound: false, loading: false });
     } catch (err) {
+      if (requestId !== this._billRequestId) return;
       console.error('加载账单失败', err);
       this.setData({ loading: false });
       util.toast('加载失败，请重试');
@@ -87,8 +92,9 @@ Page({
   },
 
   /** 应用筛选 + 统计 */
-  applyFilterAndStats() {
-    const { allBills, filterType, filterPerson } = this.data;
+  applyFilterAndStats(extraData) {
+    const allBills = this._allBills || [];
+    const { filterType, filterPerson } = this.data;
 
     // 1. 筛选
     let list = allBills.slice();
@@ -174,7 +180,7 @@ Page({
 
     const filterOn = filterType !== 'all' || !!filterPerson;
 
-    this.setData({
+    this.setData(Object.assign({
       filteredList: shown,
       dimList,
       filterOn,
@@ -185,7 +191,7 @@ Page({
         count: list.length,
         catList
       }
-    });
+    }, extraData || {}));
   },
 
   /** 切换维度 */
@@ -221,7 +227,7 @@ Page({
   onFilterPerson() {
     // 从当月数据中取人员列表
     const persons = {};
-    this.data.allBills.forEach((b) => {
+    (this._allBills || []).forEach((b) => {
       persons[b.creatorId] = b.creatorName;
     });
     const keys = Object.keys(persons);

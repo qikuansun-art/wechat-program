@@ -205,13 +205,30 @@ Page({
         util.toast(result.msg || '操作失败，请重试');
         return;
       }
-      const nextList = this.data.monthList.map((item) => {
-        const itemDate = item.occurrenceDate || item.date;
-        const itemId = item.scheduleId || item._id;
-        const itemKey = item.instanceKey || `${itemId}:${itemDate}`;
-        return itemKey === instanceKey ? Object.assign({}, item, result.schedule, { occurrenceDate: itemDate, instanceKey: itemKey }) : item;
-      });
-      this.applyMonthList(nextList);
+      const completionPatch = {
+        completed: !!result.schedule.completed,
+        completedBy: result.schedule.completedBy || '',
+        completedByName: result.schedule.completedByName || '',
+        completedAt: result.schedule.completedAt || null
+      };
+      const dateItems = this._dateMap[occurrenceDate] || [];
+      this._dateMap[occurrenceDate] = dateItems.map((item) =>
+        item.instanceKey === instanceKey ? enrichItem(Object.assign({}, item, completionPatch)) : item
+      );
+      if (this.data.selectedDate === occurrenceDate) {
+        const selectedIndex = this.data.selectedList.findIndex((item) => item.instanceKey === instanceKey);
+        if (selectedIndex >= 0) {
+          const updated = this._dateMap[occurrenceDate].find((item) => item.instanceKey === instanceKey);
+          this.setData({
+            [`selectedList[${selectedIndex}].completed`]: updated.completed,
+            [`selectedList[${selectedIndex}].completedBy`]: updated.completedBy,
+            [`selectedList[${selectedIndex}].completedByName`]: updated.completedByName,
+            [`selectedList[${selectedIndex}].completedAt`]: updated.completedAt,
+            [`selectedList[${selectedIndex}].stateText`]: updated.stateText,
+            [`selectedList[${selectedIndex}].completedHint`]: updated.completedHint
+          });
+        }
+      }
       util.toast(result.schedule.completed ? '已完成' : '已取消完成');
     } catch (err) {
       console.error('[schedule] toggle failed:', err);
