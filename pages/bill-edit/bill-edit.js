@@ -201,6 +201,8 @@ Page({
       const result = res.result || {};
       if (result.success) {
         util.toast(editMode ? '已更新' : '记好了 ❤');
+        const eventChannel = this.getOpenerEventChannel && this.getOpenerEventChannel();
+        if (eventChannel && eventChannel.emit) eventChannel.emit('billSaved');
         setTimeout(() => wx.navigateBack(), 600);
       } else {
         util.toast(result.msg || '保存失败，请重试');

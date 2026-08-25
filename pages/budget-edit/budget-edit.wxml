@@ -1,0 +1,15 @@
+<view class="page">
+  <view class="month-title">{{monthText}}</view>
+  <view class="card">
+    <view class="section-title">月总预算</view>
+    <view class="money-input"><text>¥</text><input type="digit" value="{{totalBudget}}" bindinput="onTotalInput" placeholder="请输入预算金额" /></view>
+  </view>
+  <view class="card">
+    <view class="section-title">分类预算 <text>选填</text></view>
+    <view class="category-row" wx:for="{{categories}}" wx:key="key">
+      <view class="category-name"><text>{{item.icon}}</text>{{item.name}}</view>
+      <view class="category-input"><text>¥</text><input type="digit" value="{{item.amount}}" data-index="{{index}}" bindinput="onCategoryInput" placeholder="未设置" /></view>
+    </view>
+  </view>
+  <button class="save-btn" loading="{{saving}}" disabled="{{saving}}" bindtap="onSave">保存预算</button>
+</view>

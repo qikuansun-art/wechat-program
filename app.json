@@ -8,6 +8,7 @@
     "pages/detail/detail",
     "pages/bill/bill",
     "pages/bill-edit/bill-edit",
+    "pages/budget-edit/budget-edit",
     "pages/apply/apply",
     "pages/schedule/schedule",
     "pages/schedule-edit/schedule-edit",

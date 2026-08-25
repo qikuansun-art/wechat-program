@@ -6,18 +6,24 @@
       <view class="month-arrow" bindtap="onNextMonth" aria-label="下个月">›</view>
     </view>
 
-    <view class="week-row">
-      <text class="week-cell" wx:for="{{weekdays}}" wx:key="*this">{{item}}</text>
-    </view>
-
-    <view class="calendar-grid">
-      <view class="day-cell {{item.currentMonth ? '' : 'muted'}} {{item.isToday ? 'today' : ''}} {{item.selected ? 'selected' : ''}}"
-        wx:for="{{calendarDays}}" wx:key="key" data-date="{{item.date}}" data-year="{{item.year}}" data-month="{{item.month}}"
-        bindtap="onDayTap">
-        <text class="day-number">{{item.day}}</text>
-        <view class="event-dot" wx:if="{{item.hasItems}}"></view>
-      </view>
-    </view>
+    <swiper class="calendar-swiper" current="{{swiperCurrent}}" duration="{{swiperDuration}}"
+      disable-touch="{{swiperLocked}}" bindchange="onCalendarSwiperChange" bindanimationfinish="onCalendarAnimationFinish">
+      <swiper-item wx:for="{{calendarPanels}}" wx:key="key">
+        <view class="calendar-panel">
+          <view class="week-row">
+            <text class="week-cell" wx:for="{{weekdays}}" wx:for-item="weekday" wx:key="*this">{{weekday}}</text>
+          </view>
+          <view class="calendar-grid">
+            <view class="day-cell {{day.currentMonth ? '' : 'muted'}} {{day.isToday ? 'today' : ''}} {{day.selected ? 'selected' : ''}}"
+              wx:for="{{item.days}}" wx:for-item="day" wx:key="key" data-date="{{day.date}}" data-year="{{day.year}}" data-month="{{day.month}}"
+              bindtap="onDayTap">
+              <text class="day-number">{{day.day}}</text>
+              <view class="event-dot" wx:if="{{day.hasItems}}"></view>
+            </view>
+          </view>
+        </view>
+      </swiper-item>
+    </swiper>
   </view>
 
   <view class="state-card" wx:if="{{errorCode}}">

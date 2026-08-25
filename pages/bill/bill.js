@@ -15,6 +15,10 @@ function formatMoney(n) {
 Page({
   data: {
     loading: true,
+    loadingMore: false,
+    statsLoading: true,
+    listError: false,
+    statsError: false,
     notBound: false,
     yearMonth: '',
     yearMonthText: '',
@@ -31,10 +35,15 @@ Page({
     // 筛选
     filterOn: false,
     filterType: 'all',     // all | expense | income
-    filterPerson: '',      // '' = 全部 | creatorId
+    filterPerson: 'all',   // all | mine | partner
     filterPersonText: '',
+    filterCategory: '',
+    filterCategoryText: '',
     // 数据
-    filteredList: [],      // 筛选后
+    filteredList: [],
+    page: 0,
+    hasMore: false,
+    budget: null,
     catIconMap: {},
     catNameMap: {},
     // 左滑操作
@@ -42,14 +51,20 @@ Page({
   },
 
   onLoad() {
-    this._allBills = [];
-    this._billRequestId = 0;
+    this._billListRequestId = 0;
+    this._billStatsRequestId = 0;
+    this._billViewVersion = 0;
+    this._loaded = false;
+    this._billDataDirty = false;
+    this._budgetDirty = false;
+    this._billStats = null;
     const catIconMap = {};
     const catNameMap = {};
     billCategories.EXPENSE_CATEGORIES.concat(billCategories.INCOME_CATEGORIES).forEach((c) => {
       catIconMap[c.key] = c.icon;
       catNameMap[c.key] = c.name;
     });
+    this._filterCategories = Object.keys(catNameMap).map((key) => ({ key, name: catNameMap[key] }));
     this.setData({ catIconMap, catNameMap });
 
     const now = new Date();
@@ -60,53 +75,83 @@ Page({
   },
 
   onShow() {
-    if (this.data.yearMonth) this.loadData();
+    if (!this.data.yearMonth) return;
+    if (!this._loaded || this._billDataDirty) {
+      this._billDataDirty = false;
+      this.refreshView();
+    } else if (this._budgetDirty) {
+      this._budgetDirty = false;
+      this.loadBillStats(this._billViewVersion);
+    }
   },
 
-  /** 加载当月账单 */
-  async loadData() {
-    const requestId = ++this._billRequestId;
+  onReachBottom() { this.loadMore(); },
+
+  onPullDownRefresh() {
+    this.refreshView().finally(() => wx.stopPullDownRefresh());
+  },
+
+  async refreshView() {
+    const version = ++this._billViewVersion;
+    this._loaded = true;
+    ++this._billListRequestId;
+    ++this._billStatsRequestId;
+    this._billStats = null;
+    this.setData({
+      filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false,
+      statsLoading: true, listError: false, statsError: false, swipedId: '', budget: null, dimList: [],
+      stats: { expense: 0, expenseText: '0.00', income: 0, incomeText: '0.00', balance: 0, balanceText: '0.00', count: 0, categoryStats: [], peopleStats: [] }
+    });
+    await Promise.allSettled([
+      this.loadBillFirstPage(version),
+      this.loadBillStats(version)
+    ]);
+  },
+
+  loadData() { return this.refreshView(); },
+
+  loadBillFirstPage(version) {
+    return this.loadBillPage(0, true, typeof version === 'number' ? version : this._billViewVersion);
+  },
+
+  onRetryList() { this.loadBillFirstPage(this._billViewVersion); },
+
+  async loadBillPage(page, replace, version) {
+    if (!replace && (this.data.loadingMore || !this.data.hasMore)) return;
+    const requestId = ++this._billListRequestId;
     const yearMonth = this.data.yearMonth;
-    this.setData({ loading: true });
+    const { filterType, filterPerson, filterCategory } = this.data;
+    if (!replace) this.setData({ loadingMore: true });
     try {
       const res = await wx.cloud.callFunction({
         name: 'getBills',
-        data: { yearMonth }
+        data: { yearMonth, page, pageSize: 50, type: filterType, person: filterPerson, category: filterCategory }
       });
-      if (requestId !== this._billRequestId) return;
+      if (requestId !== this._billListRequestId || version !== this._billViewVersion) return;
       const result = res.result || {};
       if (result.success === false) {
-        this._allBills = [];
-        this.setData({ loading: false, notBound: true, filteredList: [], dimList: [] });
+        this.setData({ loading: false, loadingMore: false, notBound: result.code === 'NOT_BOUND' || result.code === 'BINDING_INVALID', listError: true });
         return;
       }
-      const bills = result.list || [];
-      this._allBills = bills;
-      this.applyFilterAndStats({ notBound: false, loading: false });
+      const shown = (result.list || []).map((b) => this.formatBill(b));
+      if (replace) {
+        this.setData({ filteredList: shown, page, hasMore: !!result.hasMore, loading: false, loadingMore: false, listError: false, notBound: false });
+      } else {
+        const patch = { page, hasMore: !!result.hasMore, loadingMore: false };
+        const startIndex = this.data.filteredList.length;
+        shown.forEach((item, index) => { patch[`filteredList[${startIndex + index}]`] = item; });
+        this.setData(patch);
+      }
     } catch (err) {
-      if (requestId !== this._billRequestId) return;
+      if (requestId !== this._billListRequestId || version !== this._billViewVersion) return;
       console.error('加载账单失败', err);
-      this.setData({ loading: false });
-      util.toast('加载失败，请重试');
+      this.setData({ loading: false, loadingMore: false, listError: true });
+      util.toast(replace ? '账单列表加载失败' : '加载更多失败，请重试');
     }
   },
 
-  /** 应用筛选 + 统计 */
-  applyFilterAndStats(extraData) {
-    const allBills = this._allBills || [];
-    const { filterType, filterPerson } = this.data;
-
-    // 1. 筛选
-    let list = allBills.slice();
-    if (filterType !== 'all') {
-      list = list.filter((b) => b.type === filterType);
-    }
-    if (filterPerson) {
-      list = list.filter((b) => b.creatorId === filterPerson);
-    }
-
-    // 2. 展示用字段
-    const shown = list.map((b) => ({
+  formatBill(b) {
+    return {
       id: b.id,
       type: b.type,
       category: b.category,
@@ -119,87 +164,82 @@ Page({
       creatorId: b.creatorId,
       mine: b.mine,
       dateShort: (b.billDate || '').slice(5)
-    }));
+    };
+  },
 
-    // 3. 统计（基于当月全部数据，与筛选无关？）
-    // 用户需求「月/分类/人员统计」——这里统计按当前筛选范围计算更合理
-    let expense = 0, income = 0;
-    list.forEach((b) => {
-      if (b.type === 'income') income += Number(b.amount) || 0;
-      else expense += Number(b.amount) || 0;
-    });
-    const balance = income - expense;
-
-    // 分类统计
-    const catMap = {};
-    list.filter((b) => b.type === 'expense').forEach((b) => {
-      if (!catMap[b.category]) catMap[b.category] = 0;
-      catMap[b.category] += Number(b.amount) || 0;
-    });
-    const catTotal = Object.keys(catMap).reduce((s, k) => s + catMap[k], 0);
-    const catList = Object.keys(catMap).map((k) => ({
-      category: k,
-      name: this.data.catNameMap[k] || '其他',
-      amount: catMap[k],
-      amountText: formatMoney(catMap[k]),
-      percent: catTotal > 0 ? Math.round((catMap[k] / catTotal) * 100) : 0
-    })).sort((a, b) => b.amount - a.amount);
-
-    // 人员统计（双方）
-    const personMap = {};
-    list.forEach((b) => {
-      if (!personMap[b.creatorId]) {
-        personMap[b.creatorId] = { name: b.creatorName, expense: 0, income: 0, count: 0 };
-      }
-      if (b.type === 'income') personMap[b.creatorId].income += Number(b.amount) || 0;
-      else personMap[b.creatorId].expense += Number(b.amount) || 0;
-      personMap[b.creatorId].count++;
-    });
-    const personTotal = Object.keys(personMap).reduce((s, k) => s + personMap[k].expense, 0);
-    const personList = Object.keys(personMap).map((k) => ({
-      key: k,
-      name: personMap[k].name,
-      amountText: formatMoney(personMap[k].expense),
-      percent: personTotal > 0 ? Math.round((personMap[k].expense / personTotal) * 100) : 0,
-      sub: `支出 ${formatMoney(personMap[k].expense)} · 收入 +${formatMoney(personMap[k].income)} · ${personMap[k].count}笔`
-    }));
-
-    // 按维度渲染统计
-    const dim = this.data.dim;
-    let dimList = [];
-    if (dim === 'category') {
-      dimList = catList.map((c) => ({
-        key: c.category,
-        name: this.data.catIconMap[c.category] + ' ' + c.name,
-        amountText: c.amountText,
-        percent: c.percent
-      }));
-    } else if (dim === 'person') {
-      dimList = personList;
+  async loadBillStats(version) {
+    const requestId = ++this._billStatsRequestId;
+    this.setData({ statsLoading: true, statsError: false });
+    try {
+      const res = await wx.cloud.callFunction({ name: 'getBillStats', data: { yearMonth: this.data.yearMonth } });
+      if (requestId !== this._billStatsRequestId || version !== this._billViewVersion) return;
+      const result = res.result || {};
+      console.log('[BillPage][STATS_RESPONSE]', {
+        success: result.success,
+        stats: result.stats || null,
+        budget: result.budget || null
+      });
+      if (!result.success) throw new Error(result.msg || 'getBillStats failed');
+      const raw = result.stats || {};
+      this._billStats = raw;
+      const stats = {
+        expense: Number(raw.expense) || 0, expenseText: formatMoney(raw.expense),
+        income: Number(raw.income) || 0, incomeText: formatMoney(raw.income),
+        balance: Number(raw.balance) || 0, balanceText: formatMoney(raw.balance),
+        count: Number(raw.count) || 0,
+        categoryStats: raw.categoryStats || [], peopleStats: raw.peopleStats || []
+      };
+      const budget = this.formatBudget(result.budget);
+      this.setData({ stats, budget, dimList: this.buildDimList(this.data.dim, raw, result.budget), statsLoading: false, statsError: false, notBound: false });
+    } catch (err) {
+      if (requestId !== this._billStatsRequestId || version !== this._billViewVersion) return;
+      console.error('加载账单统计失败', err);
+      this.setData({ statsLoading: false, statsError: true });
     }
+  },
 
-    const filterOn = filterType !== 'all' || !!filterPerson;
+  formatBudget(budget) {
+    if (!budget) return null;
+    return Object.assign({}, budget, {
+      totalBudgetText: formatMoney(budget.totalBudget), expenseText: formatMoney(budget.totalExpense),
+      resultText: formatMoney(budget.status === 'overspent' ? budget.overspentAmount : budget.availableAmount),
+      resultLabel: budget.status === 'overspent' ? '已超支' : '可用额度'
+    });
+  },
 
-    this.setData(Object.assign({
-      filteredList: shown,
-      dimList,
-      filterOn,
-      stats: {
-        expense, expenseText: formatMoney(expense),
-        income, incomeText: formatMoney(income),
-        balance, balanceText: formatMoney(balance),
-        count: list.length,
-        catList
-      }
-    }, extraData || {}));
+  buildDimList(dim, stats, budget) {
+    if (!stats) return [];
+    if (dim === 'category') {
+      const usage = (budget && budget.categoryUsage) || {};
+      return (stats.categoryStats || []).map((item) => {
+        const key = item.category || item.key;
+        const budgetItem = Object.prototype.hasOwnProperty.call(usage, key) ? usage[key] : null;
+        return {
+          key, name: `${this.data.catIconMap[key] || ''} ${item.name || this.data.catNameMap[key] || '其他'}`,
+          amountText: formatMoney(item.amount), percent: Number(item.percent) || 0,
+          hasBudget: !!budgetItem,
+          budgetText: budgetItem ? formatMoney(budgetItem.budget) : '',
+          budgetResultLabel: budgetItem && budgetItem.status === 'overspent' ? '已超支' : '可用',
+          budgetResultText: budgetItem ? formatMoney(budgetItem.status === 'overspent' ? budgetItem.overspentAmount : budgetItem.availableAmount) : ''
+        };
+      });
+    }
+    if (dim === 'person') {
+      const totalExpense = Number(stats.expense) || 0;
+      return (stats.peopleStats || []).map((item) => ({
+        key: item.creatorId || item.key, name: item.name || item.creatorName || '成员',
+        amountText: formatMoney(item.expense), percent: totalExpense ? Math.round(Number(item.expense || 0) / totalExpense * 100) : 0,
+        sub: `支出 ${formatMoney(item.expense)} · 收入 +${formatMoney(item.income)} · ${Number(item.count) || 0}笔`
+      }));
+    }
+    return [];
   },
 
   /** 切换维度 */
   onDimChange(e) {
     const dim = e.currentTarget.dataset.dim;
     if (dim === this.data.dim) return;
-    this.setData({ dim });
-    this.applyFilterAndStats();
+    this.setData({ dim, dimList: this.buildDimList(dim, this._billStats, this.data.budget) });
   },
 
   /** 上一个月 */
@@ -209,53 +249,80 @@ Page({
   shiftMonth(delta) {
     const [y, m] = this.data.yearMonth.split('-').map(Number);
     const d = new Date(y, m - 1 + delta, 1);
+    ++this._billViewVersion;
     this.setData({
       yearMonth: util.monthOf(d),
       yearMonthText: util.monthText(d)
     });
-    this.loadData();
+    this.refreshView();
   },
 
   /** 筛选：收支类型 */
   onFilterType(e) {
     const type = e.currentTarget.dataset.type;
-    this.setData({ filterType: type });
-    this.applyFilterAndStats();
+    this.setData({ filterType: type, filterOn: type !== 'all' || this.data.filterPerson !== 'all' || !!this.data.filterCategory });
+    this.reloadFilteredList();
   },
 
   /** 筛选：按人员 */
   onFilterPerson() {
-    // 从当月数据中取人员列表
-    const persons = {};
-    (this._allBills || []).forEach((b) => {
-      persons[b.creatorId] = b.creatorName;
-    });
-    const keys = Object.keys(persons);
-    const items = keys.map((k) => persons[k]);
+    const userInfo = (getApp().globalData && getApp().globalData.userInfo) || {};
+    const items = ['全部人员', userInfo.nickName || '我的', userInfo.partnerName || 'TA'];
+    const values = ['all', 'mine', 'partner'];
     const that = this;
     wx.showActionSheet({
-      itemList: ['全部人员'].concat(items),
+      itemList: items,
       success(res) {
         const idx = res.tapIndex;
-        if (idx === 0) {
-          that.setData({ filterPerson: '', filterPersonText: '' });
-        } else {
-          that.setData({ filterPerson: keys[idx - 1], filterPersonText: persons[keys[idx - 1]] });
-        }
-        that.applyFilterAndStats();
+        that.setData({ filterPerson: values[idx], filterPersonText: idx === 0 ? '' : items[idx], filterOn: idx !== 0 || that.data.filterType !== 'all' || !!that.data.filterCategory });
+        that.reloadFilteredList();
       }
     });
   },
 
+  onFilterCategory() {
+    const items = ['全部分类'].concat(this._filterCategories.map((item) => item.name));
+    wx.showActionSheet({ itemList: items, success: (res) => {
+      const selected = res.tapIndex === 0 ? null : this._filterCategories[res.tapIndex - 1];
+      this.setData({ filterCategory: selected ? selected.key : '', filterCategoryText: selected ? selected.name : '', filterOn: !!selected || this.data.filterType !== 'all' || this.data.filterPerson !== 'all' });
+      this.reloadFilteredList();
+    } });
+  },
+
+  reloadFilteredList() {
+    ++this._billListRequestId;
+    this.setData({ filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false, swipedId: '' });
+    this.loadBillFirstPage(this._billViewVersion);
+  },
+
+  loadMore() {
+    if (this.data.loading || this.data.loadingMore || !this.data.hasMore) return;
+    this.loadBillPage(this.data.page + 1, false, this._billViewVersion);
+  },
+
   /** 清除筛选 */
   onClearFilter() {
-    this.setData({ filterType: 'all', filterPerson: '', filterPersonText: '' });
-    this.applyFilterAndStats();
+    this.setData({ filterType: 'all', filterPerson: 'all', filterPersonText: '', filterCategory: '', filterCategoryText: '', filterOn: false });
+    this.reloadFilteredList();
   },
 
   /** 记一笔 */
   onAdd() {
-    wx.navigateTo({ url: '/pages/bill-edit/bill-edit' });
+    this.openBillEditor('/pages/bill-edit/bill-edit');
+  },
+
+  openBillEditor(url) {
+    wx.navigateTo({ url, success: (res) => res.eventChannel.on('billSaved', () => { this._billDataDirty = true; }) });
+  },
+
+  onEditBudget() {
+    wx.navigateTo({
+      url: `/pages/budget-edit/budget-edit?month=${this.data.yearMonth}`,
+      success: (res) => {
+        res.eventChannel.on('budgetSaved', () => { this._budgetDirty = true; });
+        res.eventChannel.emit('budgetData', { budget: this.data.budget });
+      }
+    });
   },
 
   // ====== 左滑操作 ======
@@ -305,7 +372,7 @@ Page({
   onSwipeEdit(e) {
     const id = e.currentTarget.dataset.id;
     this.setData({ swipedId: '' });
-    wx.navigateTo({ url: `/pages/bill-edit/bill-edit?id=${id}` });
+    this.openBillEditor(`/pages/bill-edit/bill-edit?id=${id}`);
   },
 
   /** 点击删除按钮 */
@@ -331,7 +398,7 @@ Page({
           const result = delRes.result || {};
           if (result.success) {
             util.toast('删除成功');
-            this.loadData();
+            this.refreshView();
           } else {
             util.toast(result.msg || '删除失败');
           }
@@ -408,14 +475,9 @@ Page({
       const dt = new Date(y, m - 1 + d, 1);
       months.push(util.monthOf(dt));
     }
-    Promise.all(months.map((ym) =>
-      wx.cloud.callFunction({ name: 'getBills', data: { yearMonth: ym } })
-    )).then((resArr) => {
+    Promise.all(months.map((ym) => this.fetchAllBillsForExport(ym))).then((monthLists) => {
       wx.hideLoading();
-      let all = [];
-      resArr.forEach((r) => {
-        all = all.concat((r.result && r.result.list) || []);
-      });
+      const all = [].concat.apply([], monthLists);
       all.sort((a, b) => (a.billDate < b.billDate ? 1 : -1));
       // HTML 转义
       const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -458,6 +520,25 @@ Page({
       console.error('导出失败', err);
       util.toast('导出失败');
     });
+  },
+
+  /** 导出专用：局部分页获取完整月份，不写入页面 data。 */
+  async fetchAllBillsForExport(yearMonth) {
+    const all = [];
+    let page = 0;
+    let hasMore = true;
+    while (hasMore) {
+      const res = await wx.cloud.callFunction({
+        name: 'getBills',
+        data: { yearMonth, page, pageSize: 50, type: 'all', person: 'all', category: '' }
+      });
+      const result = (res && res.result) || {};
+      if (!result.success) throw new Error(result.msg || '导出账单加载失败');
+      all.push.apply(all, result.list || []);
+      hasMore = !!result.hasMore;
+      page += 1;
+    }
+    return all;
   },
 
   /** 导入 CSV */
@@ -527,7 +608,7 @@ Page({
           (result.fail > 0 ? '，' + result.fail + ' 条失败' : '') +
           (result.skipped > 0 ? '，' + result.skipped + ' 行跳过' : '');
         util.toast(msg);
-        this.loadData();
+        this.refreshView();
       } else {
         // 显示详细错误信息（含 debug 信息）
         let content = result.msg || '导入失败';

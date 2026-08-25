@@ -42,6 +42,10 @@ Page({
     selectedDateText: '',
     weekdays: ['日', '一', '二', '三', '四', '五', '六'],
     calendarDays: [],
+    calendarPanels: [],
+    swiperCurrent: 1,
+    swiperDuration: 300,
+    swiperLocked: false,
     monthList: [],
     selectedList: [],
     loading: true,
@@ -54,6 +58,9 @@ Page({
     const parts = today.split('-').map(Number);
     this._dateMap = {};
     this._requestId = 0;
+    this._swiperSettling = false;
+    this._swiperRecentering = false;
+    this._pendingSelectedDate = '';
     this.setData({
       year: parts[0],
       month: parts[1],
@@ -76,10 +83,26 @@ Page({
     const markedDates = {};
     Object.keys(this._dateMap || {}).forEach((date) => { markedDates[date] = this._dateMap[date].length > 0; });
     const { year, month, today, selectedDate } = this.data;
+    const calendarDays = calendar.buildMonth(year, month, { today, selectedDate, markedDates });
     this.setData({
       monthText: `${year}年${month}月`,
       selectedDateText: this.formatSelectedDate(selectedDate),
-      calendarDays: calendar.buildMonth(year, month, { today, selectedDate, markedDates })
+      calendarDays,
+      calendarPanels: this.buildCalendarPanels(year, month, calendarDays)
+    });
+  },
+
+  buildCalendarPanels(year, month, currentDays) {
+    return [-1, 0, 1].map((offset) => {
+      const target = calendar.shiftMonth(year, month, offset);
+      return {
+        key: `${target.year}-${target.month}`,
+        year: target.year,
+        month: target.month,
+        days: offset === 0 ? currentDays : calendar.buildMonth(target.year, target.month, {
+          today: this.data.today, selectedDate: '', markedDates: {}
+        })
+      };
     });
   },
 
@@ -142,28 +165,77 @@ Page({
   },
 
   onPreviousMonth() {
-    this.changeMonth(-1);
+    this.animateToMonth(-1);
   },
 
   onNextMonth() {
-    this.changeMonth(1);
+    this.animateToMonth(1);
+  },
+
+  animateToMonth(offset, selectedDate) {
+    if (this.data.swiperLocked || this._swiperSettling || (offset !== -1 && offset !== 1)) return;
+    this._pendingSelectedDate = selectedDate || '';
+    this.setData({ swiperLocked: true, swiperDuration: 300, swiperCurrent: offset > 0 ? 2 : 0 });
+  },
+
+  onCalendarSwiperChange(event) {
+    // 只记录 swiper 当前落点，不在拖动/过渡中重建月历或发请求。
+    this._swiperTargetIndex = Number(event.detail.current);
+  },
+
+  onCalendarAnimationFinish(event) {
+    const targetIndex = Number(event.detail.current);
+    if (this._swiperRecentering) {
+      if (targetIndex === 1) {
+        this._swiperRecentering = false;
+        wx.nextTick(() => this.setData({ swiperDuration: 300, swiperLocked: false }));
+      }
+      return;
+    }
+    if (targetIndex === 1 || this._swiperSettling) {
+      if (targetIndex === 1 && this.data.swiperLocked) this.setData({ swiperLocked: false });
+      return;
+    }
+    this._swiperSettling = true;
+    const offset = targetIndex === 2 ? 1 : -1;
+    const target = calendar.shiftMonth(this.data.year, this.data.month, offset);
+    const selectedDate = this._pendingSelectedDate || calendar.dateKey(target.year, target.month, 1);
+    this._pendingSelectedDate = '';
+    this._dateMap = {};
+    const currentDays = calendar.buildMonth(target.year, target.month, {
+      today: this.data.today, selectedDate, markedDates: {}
+    });
+    this._swiperRecentering = true;
+    this.setData({
+      year: target.year, month: target.month, monthText: `${target.year}年${target.month}月`,
+      selectedDate, selectedDateText: this.formatSelectedDate(selectedDate),
+      monthList: [], selectedList: [], calendarDays: currentDays,
+      calendarPanels: this.buildCalendarPanels(target.year, target.month, currentDays),
+      swiperDuration: 0, swiperCurrent: 1, swiperLocked: true
+    }, () => {
+      this._swiperSettling = false;
+      this.loadCurrentMonth();
+      // 某些基础库无动画复位不会再次触发 animationfinish。
+      wx.nextTick(() => {
+        if (this._swiperRecentering) {
+          this._swiperRecentering = false;
+          this.setData({ swiperDuration: 300, swiperLocked: false });
+        }
+      });
+    });
   },
 
   onBackToCurrentMonth() {
     const parts = this.data.today.split('-').map(Number);
     this._dateMap = {};
-    this.setData({ year: parts[0], month: parts[1], selectedDate: this.data.today, monthList: [], selectedList: [] });
+    this.setData({ year: parts[0], month: parts[1], selectedDate: this.data.today, monthList: [], selectedList: [], swiperCurrent: 1, swiperDuration: 0 });
     this.rebuildCalendar();
     this.loadCurrentMonth();
+    wx.nextTick(() => this.setData({ swiperDuration: 300, swiperLocked: false }));
   },
 
   changeMonth(offset) {
-    const target = calendar.shiftMonth(this.data.year, this.data.month, offset);
-    const selectedDate = calendar.dateKey(target.year, target.month, 1);
-    this._dateMap = {};
-    this.setData({ year: target.year, month: target.month, selectedDate, monthList: [], selectedList: [] });
-    this.rebuildCalendar();
-    this.loadCurrentMonth();
+    this.animateToMonth(offset);
   },
 
   onDayTap(event) {
@@ -172,10 +244,9 @@ Page({
     const month = Number(event.currentTarget.dataset.month);
     if (!date) return;
     if (year !== this.data.year || month !== this.data.month) {
-      this._dateMap = {};
-      this.setData({ year, month, selectedDate: date, monthList: [], selectedList: [] });
-      this.rebuildCalendar();
-      this.loadCurrentMonth();
+      const previous = calendar.shiftMonth(this.data.year, this.data.month, -1);
+      const offset = year === previous.year && month === previous.month ? -1 : 1;
+      this.animateToMonth(offset, date);
       return;
     }
     this.setData({ selectedDate: date, selectedList: this._dateMap[date] || [] });

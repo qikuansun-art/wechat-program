@@ -12,6 +12,8 @@
 .month-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18rpx; }
 .month-arrow { width: 72rpx; height: 64rpx; display: flex; align-items: center; justify-content: center; color: #FF6B81; font-size: 52rpx; border-radius: 32rpx; background: #FFF5F7; }
 .month-title { font-size: 34rpx; font-weight: 650; color: #1F2329; padding: 12rpx 30rpx; }
+.calendar-swiper { width: 100%; height: 548rpx; }
+.calendar-panel { width: 100%; height: 548rpx; }
 .week-row, .calendar-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
 .week-cell { text-align: center; color: #9AA0A6; font-size: 24rpx; padding: 12rpx 0; }
 .day-cell { height: 76rpx; position: relative; display: flex; align-items: center; justify-content: center; color: #30343B; border-radius: 18rpx; }

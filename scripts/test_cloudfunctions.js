@@ -8,7 +8,7 @@ const fs = require('fs');
 // ============================================================
 // 1. 内存数据库 + mock wx-server-sdk
 // ============================================================
-const store = { users: [], reports: [], bills: [], subscriptions: [], schedules: [], schedule_completions: [] };
+const store = { users: [], reports: [], bills: [], bill_budgets: [], subscriptions: [], schedules: [], schedule_completions: [] };
 let autoId = 0;
 const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
@@ -54,6 +54,7 @@ function match(doc, query) {
     if (cond && cond.__range) {
       if (cond.__range.gte !== undefined && doc[key] < cond.__range.gte) return false;
       if (cond.__range.lte !== undefined && doc[key] > cond.__range.lte) return false;
+      if (cond.__range.lt !== undefined && doc[key] >= cond.__range.lt) return false;
       return true;
     }
     return deepEqual(doc[key], cond);
@@ -62,6 +63,34 @@ function match(doc, query) {
 
 function makeCollection(name) {
   const coll = {
+    aggregate() {
+      let data = store[name].slice();
+      const pipeline = {
+        match(query) { data = data.filter((item) => match(item, query)); return pipeline; },
+        group(spec) {
+          const groups = new Map();
+          const resolve = (doc, expression) => typeof expression === 'string' && expression[0] === '$' ? doc[expression.slice(1)] : expression;
+          data.forEach((doc) => {
+            const id = {};
+            Object.keys(spec._id || {}).forEach((key) => { id[key] = resolve(doc, spec._id[key]); });
+            const groupKey = JSON.stringify(id);
+            if (!groups.has(groupKey)) groups.set(groupKey, { _id: id });
+            const output = groups.get(groupKey);
+            Object.keys(spec).filter((key) => key !== '_id').forEach((key) => {
+              const accumulator = spec[key];
+              if (accumulator && accumulator.__sum !== undefined) {
+                output[key] = (output[key] || 0) + Number(resolve(doc, accumulator.__sum) || 0);
+              }
+            });
+          });
+          data = Array.from(groups.values());
+          return pipeline;
+        },
+        // 真实 CloudBase 聚合 API 使用 list 返回结果，避免测试桩掩盖字段解析错误。
+        async end() { return { list: data }; }
+      };
+      return pipeline;
+    },
     where(query) {
       return {
         get: async () => ({ data: store[name].filter((d) => match(d, query)) }),
@@ -101,6 +130,13 @@ function makeCollection(name) {
           Object.assign(found, data);
           return { stats: { updated: 1 } };
         },
+        set: async ({ data }) => {
+          const index = store[name].findIndex((d) => d._id === id);
+          const record = Object.assign({ _id: id }, data);
+          if (index >= 0) store[name][index] = record;
+          else store[name].push(record);
+          return { _id: id };
+        },
         remove: async () => {
           const i = store[name].findIndex((d) => d._id === id);
           if (i < 0) throw new Error('not found');
@@ -115,9 +151,11 @@ function makeCollection(name) {
   coll.where = function (query) {
     const sorts = [];
     let limited = Infinity;
+    let skipped = 0;
     const chained = {
       orderBy(field, dir) { sorts.push({ field, dir }); return chained; },
       limit(n) { limited = n; return chained; },
+      skip(n) { skipped = n; return chained; },
       async get() {
         const base = origWhere2(query);
         const res = await base.get();
@@ -129,7 +167,7 @@ function makeCollection(name) {
           }
           return 0;
         });
-        return { data: data.slice(0, limited) };
+        return { data: data.slice(skipped, skipped + limited) };
       }
     };
     return chained;
@@ -163,6 +201,10 @@ const mockCloud = {
           };
         },
         lte(value) { return { __range: { lte: value } }; },
+        lt(value) { return { __range: { lt: value } }; },
+        aggregate: {
+          sum(value) { return { __sum: value }; }
+        },
         inc(n) { return { __inc: n }; }
       },
       RegExp({ regexp }) { return { __regex: regexp }; }
@@ -723,8 +765,40 @@ function assert(cond, msg) {
   const calendarCells = calendarUtil.buildMonth(2026, 8, { today: '2026-08-24', selectedDate: '2026-08-24', markedDates: { '2026-08-24': true } });
   assert(calendarCells.length === 42 && calendarCells.filter((item) => item.currentMonth).length === 31,
     '月历工具：固定生成 6×7 共 42 格并正确包含当月天数');
+  const nextYearMonth = calendarUtil.shiftMonth(2026, 12, 1);
+  const previousYearMonth = calendarUtil.shiftMonth(2027, 1, -1);
+  assert(nextYearMonth.year === 2027 && nextYearMonth.month === 1 &&
+    previousYearMonth.year === 2026 && previousYearMonth.month === 12,
+    '日程月历滑动：继续复用 shiftMonth，跨年向前和向后切换正确');
   assert(scheduleWxml.includes('bindtap="onPreviousMonth"') && scheduleWxml.includes('bindtap="onNextMonth"'),
     '日程主页：存在上月和下月切换入口');
+  assert(scheduleWxml.includes('<swiper class="calendar-swiper"') && scheduleWxml.includes('bindanimationfinish="onCalendarAnimationFinish"') &&
+    scheduleWxml.includes('bindchange="onCalendarSwiperChange"'),
+    '日程月历动画：月历区域使用原生 swiper 并在 animationfinish 确认切月');
+  assert(scheduleJs.includes('calendarPanels: []') && scheduleJs.includes('[-1, 0, 1].map') &&
+    scheduleWxml.includes('wx:for="{{calendarPanels}}"'),
+    '日程月历动画：始终维护上一月、当前月、下一月三屏日期数据');
+  assert(scheduleJs.includes('swiperCurrent: 1') && scheduleWxml.includes('current="{{swiperCurrent}}"'),
+    '日程月历动画：swiper 默认停留在中间页');
+  assert(!scheduleWxml.includes('bindtouchstart="onCalendarTouchStart"') && !scheduleWxml.includes('bindtouchmove="onCalendarTouchMove"') &&
+    !scheduleJs.includes('onCalendarTouchEnd') && !scheduleJs.includes('_monthSwipeThresholdPx'),
+    '日程月历动画：原 touch 瞬时切月逻辑已移除');
+  assert(scheduleJs.includes('const targetIndex = Number(event.detail.current)') && scheduleJs.includes("targetIndex === 2 ? 1 : -1") &&
+    scheduleJs.includes('swiperDuration: 0, swiperCurrent: 1'),
+    '日程月历动画：animationfinish 后按方向切月并无动画复位中间页');
+  assert(scheduleJs.includes('onPreviousMonth() {\n    this.animateToMonth(-1);') &&
+    scheduleJs.includes('onNextMonth() {\n    this.animateToMonth(1);') &&
+    scheduleJs.includes('swiperCurrent: offset > 0 ? 2 : 0'),
+    '日程月历动画：左右箭头通过 swiper current 产生同样动画');
+  assert((scheduleJs.match(/name: 'getSchedules'/g) || []).length === 1 &&
+    !/buildCalendarPanels[\s\S]{0,900}getSchedules/.test(scheduleJs),
+    '日程月历动画：三屏只生成日期，不预加载三个月日程');
+  assert(scheduleJs.includes('this._swiperSettling') && scheduleJs.includes('swiperLocked') &&
+    scheduleWxml.includes('disable-touch="{{swiperLocked}}"'),
+    '日程月历动画：切换锁防止重复 animationfinish 和快速滑动月份错位');
+  assert(scheduleJs.includes('const requestId = ++this._requestId') &&
+    (scheduleJs.match(/requestId !== this\._requestId/g) || []).length >= 2,
+    '日程月历滑动：快速连续切月继续由原 requestId 丢弃旧月份响应');
   assert(scheduleJs.includes("name: 'getSchedules'") && scheduleJs.includes('data: { year, month }'), '日程主页：已接入按月 getSchedules');
   assert(scheduleJs.includes('selectedList: this._dateMap[date] || []') && (scheduleJs.match(/name: 'getSchedules'/g) || []).length === 1,
     '日程主页：当前月点击日期从 dateMap 筛选，不重复请求 getSchedules');
@@ -1020,17 +1094,69 @@ function assert(cond, msg) {
   assert(/\.add-fab\s*\{[^}]*position:\s*fixed;/s.test(billWxss) && /safe-area-inset-bottom/.test(billWxss),
     '账单入口：fixed 定位并兼顾底部安全区');
   assert(/\.page\s*\{[^}]*padding-bottom:\s*calc\(/s.test(billWxss), '账单列表：保留足够 bottom padding 避免遮挡最后一条');
-  assert(billJs.includes('const requestId = ++this._billRequestId') &&
-    (billJs.match(/requestId !== this\._billRequestId/g) || []).length >= 2,
-    '性能优化：bill 月份请求只允许当前 requestId 更新成功或失败状态');
-  assert(!billJs.includes('allBills: []') && !billJs.includes('this.data.allBills') &&
-    billJs.includes('this._allBills = bills') && billJs.includes('const allBills = this._allBills || []'),
-    '性能优化：完整原始账单仅保存在页面实例，不进入页面 data');
-  assert(billJs.includes("filterType !== 'all'") && billJs.includes('b.creatorId === filterPerson') &&
-    billJs.includes('catMap[b.category]') && billJs.includes('personMap[b.creatorId]'),
-    '性能优化：类型/人员筛选及分类/人员统计继续基于完整原始账单');
-  assert(billJs.includes("months.map((ym) =>") && billJs.includes("name: 'getBills'") && billJs.includes('parseAndImportCSV'),
+  assert(billJs.includes('const requestId = ++this._billListRequestId') &&
+    billJs.includes('const requestId = ++this._billStatsRequestId') &&
+    (billJs.match(/version !== this\._billViewVersion/g) || []).length >= 4,
+    '性能优化：bill 列表和统计只允许当前月份版本更新状态');
+  assert(!billJs.includes('allBills: []') && !billJs.includes('this.data.allBills') && !billJs.includes('this._allBills'),
+    '账单 V2 页面：不再保存整月 _allBills');
+  assert(billJs.includes('pageSize: 50') && billJs.includes('type: filterType') &&
+    billJs.includes('person: filterPerson') && billJs.includes('category: filterCategory'),
+    '账单 V2 页面：类型、人员和分类筛选全部传给服务端');
+  assert(billJs.includes("months.map((ym) => this.fetchAllBillsForExport(ym))") && billJs.includes("name: 'getBills'") && billJs.includes('parseAndImportCSV'),
     '性能优化：CSV 导入导出仍保留完整独立数据路径');
+
+  const budgetEditJs = fs.readFileSync(path.join(__dirname, '..', 'pages/budget-edit/budget-edit.js'), 'utf8');
+  const budgetEditWxml = fs.readFileSync(path.join(__dirname, '..', 'pages/budget-edit/budget-edit.wxml'), 'utf8');
+  assert(appConfig.pages.includes('pages/budget-edit/budget-edit') && !appConfig.tabBar.list.some((item) => item.pagePath === 'pages/budget-edit/budget-edit'), '账单 V2 预算：预算编辑页已注册且不是 TabBar 页面');
+  assert(billJs.includes('Promise.allSettled') && billJs.includes('loadBillFirstPage(version)') && billJs.includes('loadBillStats(version)'),
+    '账单 V2 首次加载：第一页与完整统计并行且独立结算');
+  assert(billJs.includes('loadingMore || !this.data.hasMore') && billJs.includes('this.data.page + 1'),
+    '账单 V2 分页：loadingMore 防重且 hasMore=false 停止请求');
+  assert(billJs.includes('`filteredList[${startIndex + index}]`') && !billJs.includes('filteredList: this.data.filteredList.concat'),
+    '账单 V2 分页：后续页使用局部路径追加');
+  assert(billWxml.includes('加载中...') && billWxml.includes('没有更多了'), '账单 V2 分页：列表底部状态完整');
+  assert(billJs.includes("name: 'getBillStats'") && billJs.includes('raw.categoryStats') && billJs.includes('raw.peopleStats'),
+    '账单 V2 统计：月度、分类和人员统计来自 getBillStats');
+  assert(billJs.includes('onDimChange') && !/onDimChange[\s\S]{0,220}loadBillFirstPage/.test(billJs),
+    '账单 V2 统计：切换统计维度不重载分页列表');
+  assert(!billWxml.includes('class="budget-card"') && billWxml.includes('本月预算') && billWxml.includes('未设置') &&
+    billWxml.includes("budget.status === 'overspent'") && billWxml.includes('budget.resultText'),
+    '账单 V2 汇总卡：预算并入粉色卡片且区分未设置、可用与超支');
+  assert(billWxml.includes('item.hasBudget') && billWxml.includes('item.budgetText'),
+    '账单 V2 分类预算：仅已配置分类展示预算使用情况');
+  assert(budgetEditJs.includes('billCategories.EXPENSE_CATEGORIES') && !budgetEditJs.includes("key: 'food'"),
+    '账单 V2 预算编辑：复用统一支出分类定义');
+  assert(budgetEditJs.includes("name: 'saveBillBudget'") && budgetEditJs.includes('data: payload') &&
+    !budgetEditJs.includes('pairKey') && !budgetEditJs.includes('memberIds'),
+    '账单 V2 预算保存：只提交允许字段');
+  assert(budgetEditJs.includes("name: 'getBillStats'") && budgetEditJs.includes('sameBudget(result.budget, payload)'),
+    '账单 V2 预算保存：响应不确定时按数据库预算对账');
+  assert(billJs.includes("res.eventChannel.on('budgetSaved'") && billJs.includes('this._budgetDirty = true') &&
+    /else if \(this\._budgetDirty\)[\s\S]{0,160}loadBillStats/.test(billJs),
+    '账单 V2 生命周期：预算编辑返回只刷新统计');
+  assert(billJs.includes('while (hasMore)') && billJs.includes("type: 'all', person: 'all', category: ''") &&
+    !/fetchAllBillsForExport[\s\S]{0,900}setData/.test(billJs),
+    '账单 V2 CSV：三个月分别分页且完整数据不进入 setData');
+  assert(budgetEditWxml.includes('月总预算') && budgetEditWxml.includes('分类预算') && budgetEditWxml.includes('type="digit"'),
+    '账单 V2 预算编辑：总预算必填与分类预算表单存在');
+  const getBillStatsSource = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'getBillStats', 'index.js'), 'utf8');
+  assert(getBillStatsSource.includes('Array.isArray(aggregateRes.list)') && getBillStatsSource.includes('aggregateRes.data'),
+    '账单 V2 统计：优先解析 CloudBase aggregate().end() 的 list 并兼容旧 data 结构');
+  assert(getBillStatsSource.includes("'[BillStats][INPUT]'") && getBillStatsSource.includes("'[BillStats][MATCH_SAMPLE]'") &&
+    getBillStatsSource.includes("'[BillStats][AGG_RAW]'") && getBillStatsSource.includes("'[BillStats][AGG_ITEMS]'") &&
+    getBillStatsSource.includes("'[BillStats][FINAL_STATS]'"),
+    '账单 V2 诊断：月份、普通查询样本、原始聚合、聚合项和最终统计日志齐全');
+  assert(getBillStatsSource.includes("['totalAmount', 'amount', 'sum', 'total']") &&
+    getBillStatsSource.includes('$numberDecimal') && getBillStatsSource.includes("group._id || group.id"),
+    '账单 V2 统计：兼容聚合字段别名、分组结构和数值包装类型');
+  assert(getBillStatsSource.includes('_.gte(range.start).and(_.lt(range.end))') && getBillStatsSource.includes('`${yearMonth}-01`'),
+    '账单 V2 统计：YYYY-MM-DD 字符串使用月初闭区间、下月月初开区间查询');
+  assert(billJs.includes("'[BillPage][STATS_RESPONSE]'") && billJs.includes('stats: result.stats || null') &&
+    billJs.includes('expense: Number(raw.expense)') && billWxml.includes('¥{{stats.expenseText}}'),
+    '账单 V2 前端诊断：读取 result.stats.expense 并绑定 stats.expenseText');
+  assert(billJs.includes("else if (this._budgetDirty) {\n      this._budgetDirty = false;\n      this.loadBillStats(this._billViewVersion);"),
+    '账单 V2 预算刷新：只刷新统计且不会用零值重置列表或月度汇总');
 
   // ---------- 记账 ----------
   console.log('\n== 记账（共享账本） ==');
@@ -1062,6 +1188,160 @@ function assert(cond, msg) {
   assert(delOwn.success, 'B 删自己记的账：成功');
   const billsAfter = await callAs(A, 'getBills', { yearMonth: '2026-08' });
   assert(billsAfter.list.length === 1, '删除后账本只剩 1 笔');
+
+  // ---------- 账单 V2：分页、完整统计与共享月预算 ----------
+  console.log('\n== 账单 V2：分页、完整统计与共享月预算 ==');
+  const userAId = store.users.find((u) => u.openid === A)._id;
+  const userBId = store.users.find((u) => u.openid === B)._id;
+  for (let i = 0; i < 123; i++) {
+    const mine = i % 2 === 0;
+    const income = i % 5 === 0;
+    store.bills.push({
+      _id: `paged-${String(i).padStart(3, '0')}`,
+      creatorId: mine ? userAId : userBId,
+      creatorName: mine ? 'A' : 'B',
+      partnerId: mine ? userBId : userAId,
+      type: income ? 'income' : 'expense',
+      category: income ? 'salary' : (i % 3 === 0 ? 'food' : 'shopping'),
+      categoryName: income ? '工资' : (i % 3 === 0 ? '餐饮' : '购物'),
+      amount: 1,
+      billDate: `2026-07-${String(1 + (i % 28)).padStart(2, '0')}`,
+      createdAt: '2026-07-15T12:00:00.000Z'
+    });
+  }
+  const firstBillPage = await callAs(A, 'getBills', { yearMonth: '2026-07', page: 0, pageSize: 500 });
+  const secondBillPage = await callAs(A, 'getBills', { yearMonth: '2026-07', page: 1, pageSize: 50 });
+  const lastBillPage = await callAs(A, 'getBills', { yearMonth: '2026-07', page: 2, pageSize: 50 });
+  assert(firstBillPage.success && firstBillPage.list.length === 50 && firstBillPage.pageSize === 50 && firstBillPage.hasMore,
+    '账单 V2 分页：第一页最多 50 条，第 51 条仅用于 hasMore，客户端不能请求 500 条');
+  assert(secondBillPage.list.length === 50 && secondBillPage.hasMore &&
+    !secondBillPage.list.some((item) => firstBillPage.list.some((first) => first.id === item.id)),
+    '账单 V2 分页：第二页正确且不重复第一页');
+  assert(lastBillPage.list.length === 23 && !lastBillPage.hasMore, '账单 V2 分页：最后一页返回剩余记录且 hasMore=false');
+  const expensePage = await callAs(A, 'getBills', { yearMonth: '2026-07', type: 'expense' });
+  const incomePage = await callAs(A, 'getBills', { yearMonth: '2026-07', type: 'income' });
+  const minePage = await callAs(A, 'getBills', { yearMonth: '2026-07', person: 'mine' });
+  const partnerPage = await callAs(A, 'getBills', { yearMonth: '2026-07', person: 'partner' });
+  const foodPage = await callAs(A, 'getBills', { yearMonth: '2026-07', category: 'food' });
+  assert(expensePage.list.every((item) => item.type === 'expense') && incomePage.list.every((item) => item.type === 'income'),
+    '账单 V2 筛选：expense/income 在服务端过滤');
+  assert(minePage.list.every((item) => item.creatorId === userAId) && partnerPage.list.every((item) => item.creatorId === userBId),
+    '账单 V2 筛选：mine/partner 由服务端真实双方身份映射');
+  assert(foodPage.list.length > 0 && foodPage.list.every((item) => item.category === 'food'), '账单 V2 筛选：分类在服务端过滤');
+  const forgedScope = await callAs(A, 'getBills', {
+    yearMonth: '2026-07', creatorId: 'id-foreign', partnerId: 'id-foreign', openid: C, userId: 'id-foreign'
+  });
+  assert(forgedScope.success && forgedScope.list.every((item) => [userAId, userBId].includes(item.creatorId)),
+    '账单 V2 权限：客户端伪造身份字段不能改变查询范围');
+  const stablePage = firstBillPage.list.slice().sort((left, right) =>
+    String(right.billDate).localeCompare(String(left.billDate)) || String(right.createdAt).localeCompare(String(left.createdAt)) || String(right.id).localeCompare(String(left.id))
+  );
+  assert(deepEqual(firstBillPage.list.map((item) => item.id), stablePage.map((item) => item.id)),
+    '账单 V2 分页：billDate/createdAt/_id 三字段降序稳定');
+
+  for (let i = 0; i < 1005; i++) {
+    store.bills.push({
+      _id: `stats-${String(i).padStart(4, '0')}`, creatorId: i % 2 ? userAId : userBId,
+      creatorName: i % 2 ? 'A' : 'B', partnerId: i % 2 ? userBId : userAId,
+      type: i % 10 === 0 ? 'income' : 'expense', category: i % 2 ? 'food' : 'other',
+      categoryName: i % 2 ? '餐饮' : '其他', amount: 1, billDate: '2026-06-15', createdAt: '2026-06-15T10:00:00.000Z'
+    });
+  }
+  const statsBeforeBudget = await callAs(A, 'getBillStats', { yearMonth: '2026-06' });
+  assert(statsBeforeBudget.success && statsBeforeBudget.stats.count === 1005 &&
+    statsBeforeBudget.stats.expense === 904 && statsBeforeBudget.stats.income === 101,
+    '账单 V2 统计：超过 1000 条仍通过数据库聚合覆盖完整自然月且收支正确');
+  assert(statsBeforeBudget.stats.categoryStats.reduce((sum, item) => sum + item.amount, 0) === 904 &&
+    statsBeforeBudget.stats.peopleStats.reduce((sum, item) => sum + item.count, 0) === 1005,
+    '账单 V2 统计：分类和人员聚合覆盖完整月份，不依赖 getBills 第一页');
+  assert(statsBeforeBudget.budget === null, '账单 V2 预算：未设置月份明确返回 budget=null');
+
+  [100, 7.5, 46.93].forEach((amount, index) => store.bills.push({
+    _id: `budget-stable-${index}`, creatorId: index % 2 ? userAId : userBId,
+    creatorName: index % 2 ? 'A' : 'B', type: 'expense', category: index === 2 ? 'shopping' : 'food',
+    categoryName: index === 2 ? '购物' : '餐饮', amount, billDate: `2026-04-${String(index + 2).padStart(2, '0')}`, createdAt: `2026-04-0${index + 2}T10:00:00.000Z`
+  }));
+  store.bills.push({
+    _id: 'budget-stable-income', creatorId: userAId, creatorName: 'A', type: 'income', category: 'salary',
+    categoryName: '工资', amount: 500, billDate: '2026-04-08', createdAt: '2026-04-08T10:00:00.000Z'
+  });
+  const aprilBeforeBudget = await callAs(A, 'getBillStats', { yearMonth: '2026-04' });
+  await callAs(A, 'saveBillBudget', { month: '2026-04', totalBudget: 1000, categoryBudgets: { food: 200, shopping: 100 } });
+  const aprilAfterBudget = await callAs(B, 'getBillStats', { yearMonth: '2026-04' });
+  await callAs(B, 'saveBillBudget', { month: '2026-04', totalBudget: 900, categoryBudgets: { food: 150, shopping: 80 } });
+  const aprilAfterModify = await callAs(A, 'getBillStats', { yearMonth: '2026-04' });
+  assert(aprilBeforeBudget.stats.expense === 154.43 && aprilAfterBudget.stats.expense === 154.43 && aprilAfterModify.stats.expense === 154.43,
+    '账单 V2 预算回归：设置和修改预算均不改变当月完整支出');
+  assert(aprilAfterBudget.stats.income === 500 && aprilAfterBudget.budget.availableAmount === 845.57,
+    '账单 V2 预算回归：可用额度只以 1000-154.43 计算，收入不参与扣减');
+  assert(aprilAfterBudget.stats.categoryStats.reduce((sum, item) => sum + item.amount, 0) === 154.43 &&
+    aprilAfterBudget.budget.categoryUsage.food.expense === 107.5 && aprilAfterBudget.budget.categoryUsage.shopping.expense === 46.93,
+    '账单 V2 预算回归：分类预算使用完整月份分类支出');
+
+  const invalidNegativeBudget = await callAs(A, 'saveBillBudget', { month: '2026-08', totalBudget: -1, categoryBudgets: {} });
+  const invalidStringBudget = await callAs(A, 'saveBillBudget', { month: '2026-08', totalBudget: '5000', categoryBudgets: {} });
+  const invalidPrecisionBudget = await callAs(A, 'saveBillBudget', { month: '2026-08', totalBudget: 1.234, categoryBudgets: {} });
+  const invalidIncomeCategory = await callAs(A, 'saveBillBudget', { month: '2026-08', totalBudget: 5000, categoryBudgets: { salary: 100 } });
+  assert(!invalidNegativeBudget.success && !invalidStringBudget.success && !invalidPrecisionBudget.success,
+    '账单 V2 预算校验：负数、数字字符串和超过两位小数均拒绝');
+  assert(!invalidIncomeCategory.success && invalidIncomeCategory.code === 'INVALID_BUDGET_CATEGORY',
+    '账单 V2 预算校验：收入分类不能进入 categoryBudgets');
+  const zeroBudget = await callAs(A, 'saveBillBudget', {
+    month: '2026-05', totalBudget: 0, categoryBudgets: {}, pairKey: 'forged', memberIds: ['x'], updatedBy: 'x'
+  });
+  const zeroStats = await callAs(B, 'getBillStats', { yearMonth: '2026-05' });
+  assert(zeroBudget.success && zeroStats.budget && zeroStats.budget.totalBudget === 0,
+    '账单 V2 预算：明确设置 0 合法，且与未设置 budget=null 区分');
+  assert(zeroBudget.budget.pairKey === [userAId, userBId].sort().join('|') && zeroBudget.budget.updatedBy === userAId,
+    '账单 V2 预算：pairKey/memberIds/updatedBy 均由服务端真实身份生成，客户端伪造无效');
+
+  const savedBudget = await callAs(A, 'saveBillBudget', {
+    month: '2026-08', totalBudget: 100, categoryBudgets: { food: 50, shopping: 120 }
+  });
+  const budgetReadByB = await callAs(B, 'getBillStats', { yearMonth: '2026-08' });
+  assert(savedBudget.success && budgetReadByB.budget && budgetReadByB.budget.totalBudget === 100,
+    '账单 V2 预算：A 设置后 B 可读取同一份共享预算');
+  assert(Object.keys(budgetReadByB.budget.categoryUsage).length === 2 &&
+    budgetReadByB.budget.categoryUsage.food.expense === 33.33 && budgetReadByB.budget.categoryUsage.food.availableAmount === 16.67,
+    '账单 V2 预算：只生成已设置分类，分类可用额度计算正确');
+  assert(budgetReadByB.budget.status === 'available' && budgetReadByB.budget.availableAmount === 66.67,
+    '账单 V2 预算：总预算可用额度仅扣除支出，不扣除收入');
+  const overspentSave = await callAs(B, 'saveBillBudget', {
+    month: '2026-08', totalBudget: 20, categoryBudgets: { food: 10, shopping: 5 }
+  });
+  const overspentRead = await callAs(A, 'getBillStats', { yearMonth: '2026-08' });
+  assert(overspentSave.success && overspentRead.budget.status === 'overspent' &&
+    overspentRead.budget.availableAmount === 0 && overspentRead.budget.overspentAmount === 13.33,
+    '账单 V2 预算：B 修改后 A 可读取，超支返回正数且可用额度为 0');
+  assert(overspentRead.budget.categoryUsage.food.status === 'overspent' &&
+    overspentRead.budget.categoryUsage.food.overspentAmount === 23.33,
+    '账单 V2 预算：分类超支金额和状态正确，分类预算总和可大于或小于总预算');
+
+  const concurrentFirstBudget = await Promise.all([
+    callAs(A, 'saveBillBudget', { month: '2026-09', totalBudget: 1000, categoryBudgets: { food: 100 } }),
+    callAs(B, 'saveBillBudget', { month: '2026-09', totalBudget: 2000, categoryBudgets: { shopping: 300 } })
+  ]);
+  const septemberPairKey = [userAId, userBId].sort().join('|');
+  assert(concurrentFirstBudget.every((item) => item.success) &&
+    store.bill_budgets.filter((item) => item.pairKey === septemberPairKey && item.month === '2026-09').length === 1,
+    '账单 V2 预算并发：双方同时首次设置只产生一条确定性文档');
+  const concurrentModifyBudget = await Promise.all([
+    callAs(A, 'saveBillBudget', { month: '2026-09', totalBudget: 3000, categoryBudgets: {} }),
+    callAs(B, 'saveBillBudget', { month: '2026-09', totalBudget: 4000, categoryBudgets: { gift: 20 } })
+  ]);
+  const finalSeptember = await callAs(A, 'getBillStats', { yearMonth: '2026-09' });
+  assert(concurrentModifyBudget.every((item) => item.success) && [3000, 4000].includes(finalSeptember.budget.totalBudget) &&
+    store.bill_budgets.filter((item) => item.pairKey === septemberPairKey && item.month === '2026-09').length === 1,
+    '账单 V2 预算并发：同时修改采用最后成功提交且最终只有一份状态');
+
+  const originalBPartnerForBudget = store.users.find((u) => u.openid === B).partnerId;
+  store.users.find((u) => u.openid === B).partnerId = '';
+  const invalidBindingBills = await callAs(A, 'getBills', { yearMonth: '2026-08' });
+  const invalidBindingStats = await callAs(A, 'getBillStats', { yearMonth: '2026-08' });
+  const invalidBindingSave = await callAs(A, 'saveBillBudget', { month: '2026-10', totalBudget: 100, categoryBudgets: {} });
+  store.users.find((u) => u.openid === B).partnerId = originalBPartnerForBudget;
+  assert([invalidBindingBills, invalidBindingStats, invalidBindingSave].every((item) => !item.success && item.code === 'BINDING_INVALID'),
+    '账单 V2 权限：双向绑定异常时分页、统计和预算保存统一拒绝');
 
   // ---------- 解绑事务 ----------
   console.log('\n== 解绑事务 ==');

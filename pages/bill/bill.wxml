@@ -26,11 +26,29 @@
 
   <!-- 月度统计卡片 -->
   <view class="stat-card" wx:if="{{!notBound}}">
+    <view class="stat-card-head">
+      <text class="stat-label">本期支出</text>
+      <text class="stat-budget-link" bindtap="onEditBudget">{{budget ? '修改预算' : '设置预算'}} ›</text>
+    </view>
     <view class="stat-main">
-      <view class="stat-label">本期支出</view>
       <view class="stat-expense">¥{{stats.expenseText}}</view>
     </view>
-    <view class="stat-sub">
+    <view class="stat-sub stat-budget-row">
+      <view class="stat-item">
+        <text class="stat-item-label">本月预算</text>
+        <text class="stat-value" wx:if="{{budget}}">¥{{budget.totalBudgetText}}</text>
+        <text class="stat-value stat-placeholder" wx:else>未设置</text>
+      </view>
+      <view class="stat-divider"></view>
+      <view class="stat-item">
+        <text class="stat-item-label">{{budget && budget.status === 'overspent' ? '已超支' : '可用额度'}}</text>
+        <text class="stat-value stat-over" wx:if="{{budget && budget.status === 'overspent'}}">¥{{budget.resultText}}</text>
+        <text class="stat-value" wx:elif="{{budget}}">¥{{budget.resultText}}</text>
+        <text class="stat-value stat-placeholder" wx:else>--</text>
+      </view>
+    </view>
+    <view class="stat-separator"></view>
+    <view class="stat-sub stat-income-row">
       <view class="stat-item">
         <text class="stat-item-label">收入</text>
         <text class="stat-income">+¥{{stats.incomeText}}</text>
@@ -38,9 +56,10 @@
       <view class="stat-divider"></view>
       <view class="stat-item">
         <text class="stat-item-label">结余</text>
-        <text class="stat-balance">{{stats.balanceText}}</text>
+        <text class="stat-balance">¥{{stats.balanceText}}</text>
       </view>
     </view>
+    <view class="stat-error" wx:if="{{statsError}}">月度汇总暂时加载失败</view>
   </view>
 
   <!-- 统计维度切换（月/分类/人员） -->
@@ -53,7 +72,11 @@
   <!-- 统计明细（按维度） -->
   <view class="dim-panel" wx:if="{{dim !== 'month' && !notBound}}">
     <view class="dim-row" wx:for="{{dimList}}" wx:key="key">
-      <text class="dim-name">{{item.name}}</text>
+      <view class="dim-name-wrap">
+        <text class="dim-name">{{item.name}}</text>
+        <text class="dim-budget" wx:if="{{item.hasBudget}}">已支出 ¥{{item.amountText}} · 预算 ¥{{item.budgetText}} · {{item.budgetResultLabel}} ¥{{item.budgetResultText}}</text>
+        <text class="dim-budget" wx:elif="{{item.sub}}">{{item.sub}}</text>
+      </view>
       <view class="dim-track">
         <view class="dim-fill" style="width: {{item.percent}}%"></view>
       </view>
@@ -67,8 +90,13 @@
     <view class="filter-chip {{filterType === 'all' ? 'active' : ''}}" bindtap="onFilterType" data-type="all">全部</view>
     <view class="filter-chip {{filterType === 'expense' ? 'active' : ''}}" bindtap="onFilterType" data-type="expense">支出</view>
     <view class="filter-chip {{filterType === 'income' ? 'active' : ''}}" bindtap="onFilterType" data-type="income">收入</view>
-    <view class="filter-chip {{filterPerson !== '' ? 'active' : ''}}" bindtap="onFilterPerson">人员:{{filterPersonText || '全部'}}</view>
+    <view class="filter-chip {{filterPerson !== 'all' ? 'active' : ''}}" bindtap="onFilterPerson">人员:{{filterPersonText || '全部'}}</view>
+    <view class="filter-chip {{filterCategory ? 'active' : ''}}" bindtap="onFilterCategory">分类:{{filterCategoryText || '全部'}}</view>
   </view>
+
+  <view class="list-error" wx:if="{{listError && filteredList.length === 0}}" bindtap="onRetryList">账单列表加载失败，点击重试</view>
+  <view class="list-footer" wx:if="{{loadingMore}}">加载中...</view>
+  <view class="list-footer" wx:if="{{!hasMore && filteredList.length > 0 && !loading}}">没有更多了</view>
 
   <!-- 空状态 -->
   <view class="empty" wx:if="{{!loading && filteredList.length === 0}}">
