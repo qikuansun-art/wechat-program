@@ -113,6 +113,11 @@ Page({
     wx.navigateTo({ url: `/pages/detail/detail?id=${id}` });
   },
 
+  /** 复用现有报备表单 */
+  onCreateReport() {
+    wx.navigateTo({ url: '/pages/apply/apply' });
+  },
+
   /** 下拉刷新 */
   onPullDownRefresh() {
     this.refresh().finally(() => wx.stopPullDownRefresh());

@@ -1,5 +1,10 @@
 /* pages/record/record.wxss —— 记录页样式 */
 
+.page {
+  box-sizing: border-box;
+  padding-bottom: calc(220rpx + env(safe-area-inset-bottom));
+}
+
 /* ====== 主标签栏（角色切换） ====== */
 .role-tabs {
   display: flex;
@@ -141,4 +146,26 @@
 .load-more-text {
   font-size: 24rpx;
   color: #C4C9D0;
+}
+
+/* 固定入口：位于原生 TabBar 上方 */
+.create-report-fab {
+  position: fixed;
+  right: 28rpx;
+  bottom: calc(120rpx + env(safe-area-inset-bottom));
+  z-index: 20;
+  height: 88rpx;
+  padding: 0 34rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 44rpx;
+  color: #FFFFFF;
+  background: linear-gradient(135deg, #FF6B81, #FF8E9F);
+  box-shadow: 0 8rpx 20rpx rgba(255, 107, 129, .3);
+  font-size: 29rpx;
+  font-weight: 600;
+}
+.create-report-fab:active {
+  opacity: .88;
 }

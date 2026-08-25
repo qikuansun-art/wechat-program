@@ -837,6 +837,18 @@ function assert(cond, msg) {
     /\.today-checkin-icon\s*\{[^}]*width:\s*48rpx;[^}]*height:\s*48rpx;/s.test(indexWxss),
     '首页今日安排：三种完成图标放大至 46～52rpx，点击区域统一为 72rpx');
 
+  // ---------- 报备记录页固定发起入口 ----------
+  console.log('\n== 报备记录页固定发起入口 ==');
+  const recordJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'record', 'record.js'), 'utf8');
+  const recordWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'record', 'record.wxml'), 'utf8');
+  const recordWxss = fs.readFileSync(path.join(__dirname, '..', 'pages', 'record', 'record.wxss'), 'utf8');
+  assert(recordWxml.includes('class="create-report-fab"') && recordWxml.includes('bindtap="onCreateReport"') &&
+    recordJs.includes("wx.navigateTo({ url: '/pages/apply/apply' })"), '报备记录页：固定入口复用现有 apply 页面');
+  assert(/\.create-report-fab\s*\{[^}]*position:\s*fixed;/s.test(recordWxss) &&
+    /bottom:\s*calc\(120rpx\s*\+\s*env\(safe-area-inset-bottom\)\)/.test(recordWxss), '报备记录页：按钮 fixed 定位于 TabBar 和安全区上方');
+  assert(/\.page\s*\{[^}]*padding-bottom:\s*calc\(220rpx\s*\+\s*env\(safe-area-inset-bottom\)\)/s.test(recordWxss),
+    '报备记录页：列表预留底部空间避免遮挡最后一条');
+
   // ---------- Banner 原子同步与受控访问 ----------
   console.log('\n== Banner 原子同步与受控访问 ==');
   const banner1 = 'cloud://test-env/banners/a-1.jpg';

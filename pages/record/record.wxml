@@ -59,5 +59,7 @@
     <text class="load-more-text">{{loadingMore ? '加载中...' : (hasMore ? '上拉加载更多' : '已经到底啦')}}</text>
   </view>
 
+  <view class="create-report-fab" bindtap="onCreateReport">＋ 发起报备</view>
+
   <view class="page-bottom"></view>
 </view>
