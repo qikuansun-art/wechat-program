@@ -1115,6 +1115,12 @@ function assert(cond, msg) {
     '账单 V2 分页：loadingMore 防重且 hasMore=false 停止请求');
   assert(billJs.includes('`filteredList[${startIndex + index}]`') && !billJs.includes('filteredList: this.data.filteredList.concat'),
     '账单 V2 分页：后续页使用局部路径追加');
+  assert(billJs.includes('createIntersectionObserver') && billJs.includes("observe('.pagination-sentinel'") &&
+    billWxml.includes('class="pagination-sentinel"') && billJs.includes('onReachBottom() { this.loadMore(); }'),
+    '账单 V2 分页：页面触底与列表末尾哨兵均能触发加载更多');
+  assert(billJs.includes('this._loadingMore = true') && billJs.includes('} finally {') &&
+    billJs.includes('requestId === this._billListRequestId') && billJs.includes('version !== this._billViewVersion'),
+    '账单 V2 分页：实例锁防重复，finally 恢复并丢弃过期响应');
   assert(billWxml.includes('加载中...') && billWxml.includes('没有更多了'), '账单 V2 分页：列表底部状态完整');
   assert(billJs.includes("name: 'getBillStats'") && billJs.includes('raw.categoryStats') && billJs.includes('raw.peopleStats'),
     '账单 V2 统计：月度、分类和人员统计来自 getBillStats');
@@ -1143,18 +1149,17 @@ function assert(cond, msg) {
   const getBillStatsSource = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'getBillStats', 'index.js'), 'utf8');
   assert(getBillStatsSource.includes('Array.isArray(aggregateRes.list)') && getBillStatsSource.includes('aggregateRes.data'),
     '账单 V2 统计：优先解析 CloudBase aggregate().end() 的 list 并兼容旧 data 结构');
-  assert(getBillStatsSource.includes("'[BillStats][INPUT]'") && getBillStatsSource.includes("'[BillStats][MATCH_SAMPLE]'") &&
-    getBillStatsSource.includes("'[BillStats][AGG_RAW]'") && getBillStatsSource.includes("'[BillStats][AGG_ITEMS]'") &&
-    getBillStatsSource.includes("'[BillStats][FINAL_STATS]'"),
-    '账单 V2 诊断：月份、普通查询样本、原始聚合、聚合项和最终统计日志齐全');
+  assert(!getBillStatsSource.includes('[BillStats]') && !getBillStatsSource.includes('MATCH_SAMPLE') &&
+    !getBillStatsSource.includes('sampleRes'),
+    '账单 V2 封板：临时诊断日志和普通查询样本已清理');
   assert(getBillStatsSource.includes("['totalAmount', 'amount', 'sum', 'total']") &&
     getBillStatsSource.includes('$numberDecimal') && getBillStatsSource.includes("group._id || group.id"),
     '账单 V2 统计：兼容聚合字段别名、分组结构和数值包装类型');
   assert(getBillStatsSource.includes('_.gte(range.start).and(_.lt(range.end))') && getBillStatsSource.includes('`${yearMonth}-01`'),
     '账单 V2 统计：YYYY-MM-DD 字符串使用月初闭区间、下月月初开区间查询');
-  assert(billJs.includes("'[BillPage][STATS_RESPONSE]'") && billJs.includes('stats: result.stats || null') &&
+  assert(!billJs.includes('[BillPage][STATS_RESPONSE]') && billJs.includes('const raw = result.stats || {}') &&
     billJs.includes('expense: Number(raw.expense)') && billWxml.includes('¥{{stats.expenseText}}'),
-    '账单 V2 前端诊断：读取 result.stats.expense 并绑定 stats.expenseText');
+    '账单 V2 前端：诊断日志已清理，仍读取 result.stats.expense 并绑定 stats.expenseText');
   assert(billJs.includes("else if (this._budgetDirty) {\n      this._budgetDirty = false;\n      this.loadBillStats(this._billViewVersion);"),
     '账单 V2 预算刷新：只刷新统计且不会用零值重置列表或月度汇总');
 
@@ -1218,6 +1223,30 @@ function assert(cond, msg) {
     !secondBillPage.list.some((item) => firstBillPage.list.some((first) => first.id === item.id)),
     '账单 V2 分页：第二页正确且不重复第一页');
   assert(lastBillPage.list.length === 23 && !lastBillPage.hasMore, '账单 V2 分页：最后一页返回剩余记录且 hasMore=false');
+  const boundaryCases = [
+    { month: '2025-01', count: 49, lengths: [49], more: [false] },
+    { month: '2025-02', count: 50, lengths: [50], more: [false] },
+    { month: '2025-03', count: 51, lengths: [50, 1], more: [true, false] },
+    { month: '2025-04', count: 100, lengths: [50, 50], more: [true, false] },
+    { month: '2025-05', count: 101, lengths: [50, 50, 1], more: [true, true, false] }
+  ];
+  for (const testCase of boundaryCases) {
+    for (let i = 0; i < testCase.count; i++) {
+      store.bills.push({
+        _id: `boundary-${testCase.month}-${i}`,
+        creatorId: userAId, creatorName: 'A', partnerId: userBId,
+        type: 'expense', category: 'food', categoryName: '餐饮', amount: 1,
+        billDate: `${testCase.month}-${String(1 + (i % 28)).padStart(2, '0')}`,
+        createdAt: `${testCase.month}-15T12:00:00.000Z`
+      });
+    }
+    const pages = [];
+    for (let page = 0; page < testCase.lengths.length; page++) {
+      pages.push(await callAs(A, 'getBills', { yearMonth: testCase.month, page, pageSize: 50 }));
+    }
+    assert(pages.every((item, index) => item.list.length === testCase.lengths[index] && item.hasMore === testCase.more[index]),
+      `账单 V2 分页边界：${testCase.count} 条按 50 条分页且 hasMore 正确`);
+  }
   const expensePage = await callAs(A, 'getBills', { yearMonth: '2026-07', type: 'expense' });
   const incomePage = await callAs(A, 'getBills', { yearMonth: '2026-07', type: 'income' });
   const minePage = await callAs(A, 'getBills', { yearMonth: '2026-07', person: 'mine' });

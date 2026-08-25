@@ -95,9 +95,6 @@
   </view>
 
   <view class="list-error" wx:if="{{listError && filteredList.length === 0}}" bindtap="onRetryList">账单列表加载失败，点击重试</view>
-  <view class="list-footer" wx:if="{{loadingMore}}">加载中...</view>
-  <view class="list-footer" wx:if="{{!hasMore && filteredList.length > 0 && !loading}}">没有更多了</view>
-
   <!-- 空状态 -->
   <view class="empty" wx:if="{{!loading && filteredList.length === 0}}">
     <view class="empty-icon">🧾</view>
@@ -138,6 +135,10 @@
       </view>
     </view>
   </view>
+
+  <view class="list-footer" wx:if="{{loadingMore}}">加载中...</view>
+  <view class="list-footer" wx:if="{{!hasMore && filteredList.length > 0 && !loading}}">没有更多了</view>
+  <view class="pagination-sentinel" aria-hidden="true"></view>
 
   <!-- 固定记一笔入口 -->
   <view class="add-fab" bindtap="onAdd">＋ 记一笔</view>

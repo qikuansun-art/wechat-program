@@ -84,26 +84,12 @@ exports.main = async (event = {}) => {
     const range = monthRange(yearMonth);
     const memberIds = [auth.me._id, auth.partner._id];
     const matchCondition = { creatorId: _.in(memberIds), billDate: _.gte(range.start).and(_.lt(range.end)) };
-    console.log('[BillStats][INPUT]', { yearMonth, monthStart: range.start, nextMonthStart: range.end });
-    const sampleRes = await db.collection('bills').where(matchCondition).limit(5).get();
-    const sample = (sampleRes.data || []).map((item) => ({
-      billDate: item.billDate, type: item.type, amount: item.amount, amountType: typeof item.amount
-    }));
-    console.log('[BillStats][MATCH_SAMPLE]', { count: sample.length, items: sample });
     const aggregateRes = await db.collection('bills').aggregate()
       .match(matchCondition)
       .group({
         _id: { type: '$type', category: '$category', creatorId: '$creatorId' },
         totalAmount: $.sum('$amount'), count: $.sum(1)
       }).end();
-    const rawKeys = aggregateRes && typeof aggregateRes === 'object' ? Object.keys(aggregateRes) : [];
-    console.log('[BillStats][AGG_RAW]', {
-      keys: rawKeys,
-      hasList: !!(aggregateRes && Array.isArray(aggregateRes.list)),
-      hasData: !!(aggregateRes && Array.isArray(aggregateRes.data)),
-      listLength: aggregateRes && Array.isArray(aggregateRes.list) ? aggregateRes.list.length : null,
-      dataLength: aggregateRes && Array.isArray(aggregateRes.data) ? aggregateRes.data.length : null
-    });
     let expense = 0, income = 0, count = 0;
     const categoryExpense = {};
     const peopleMap = {};
@@ -125,10 +111,6 @@ exports.main = async (event = {}) => {
         count: Math.max(0, Math.trunc(numberValue(firstDefined(group, ['count', 'totalCount']))))
       };
     });
-    console.log('[BillStats][AGG_ITEMS]', parsedGroups.map((group) => ({
-      '_id.type': group.type, '_id.category': group.category, '_id.creatorId': group.creatorId,
-      totalAmount: group.totalAmount, count: group.count
-    })));
     parsedGroups.forEach((group) => {
       const amount = group.totalAmount;
       const groupCount = group.count;
@@ -155,10 +137,6 @@ exports.main = async (event = {}) => {
       creatorId: item.creatorId, creatorName: item.creatorName, expense: money(item.expense),
       income: money(item.income), count: item.count
     }));
-    console.log('[BillStats][FINAL_STATS]', {
-      expense, income, balance: money(income - expense), count,
-      categoryStatsLength: categoryStats.length, peopleStatsLength: peopleStats.length
-    });
     const pair = pairInfo(auth.me, auth.partner);
     const budgetRes = await db.collection('bill_budgets').doc(budgetId(pair.pairKey, yearMonth)).get().catch(() => null);
     const record = budgetRes && budgetRes.data && budgetRes.data.pairKey === pair.pairKey && budgetRes.data.month === yearMonth ? budgetRes.data : null;

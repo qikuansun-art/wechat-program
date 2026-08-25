@@ -7,7 +7,7 @@ const db = cloud.database();
 
 const TEMPLATE_NEW_REPORT = '9Olki2zL-v7V_Nse9V0MNTWq2d8nlTIo6aW1YV1Gmvg';
 const NOTIFY_PAGE = 'pages/message/message';
-const MINIPROGRAM_STATE = 'trial';
+const MINIPROGRAM_STATE = 'formal';
 
 /** 简单格式化时间：Date / serverDate / 时间戳 → 'YYYY-MM-DD HH:mm' */
 function formatTime(value) {

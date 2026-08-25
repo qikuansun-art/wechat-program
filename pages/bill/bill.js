@@ -58,6 +58,8 @@ Page({
     this._billDataDirty = false;
     this._budgetDirty = false;
     this._billStats = null;
+    this._loadingMore = false;
+    this._paginationObserver = null;
     const catIconMap = {};
     const catNameMap = {};
     billCategories.EXPENSE_CATEGORIES.concat(billCategories.INCOME_CATEGORIES).forEach((c) => {
@@ -72,6 +74,20 @@ Page({
       yearMonth: util.monthOf(now),
       yearMonthText: util.monthText(now)
     });
+  },
+
+  onReady() {
+    this._paginationObserver = this.createIntersectionObserver({ thresholds: [0, 1] });
+    this._paginationObserver
+      .relativeToViewport({ bottom: 100 })
+      .observe('.pagination-sentinel', (res) => {
+        if (res.intersectionRatio > 0) this.loadMore();
+      });
+  },
+
+  onUnload() {
+    if (this._paginationObserver) this._paginationObserver.disconnect();
+    this._paginationObserver = null;
   },
 
   onShow() {
@@ -96,6 +112,7 @@ Page({
     this._loaded = true;
     ++this._billListRequestId;
     ++this._billStatsRequestId;
+    this._loadingMore = false;
     this._billStats = null;
     this.setData({
       filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false,
@@ -117,11 +134,14 @@ Page({
   onRetryList() { this.loadBillFirstPage(this._billViewVersion); },
 
   async loadBillPage(page, replace, version) {
-    if (!replace && (this.data.loadingMore || !this.data.hasMore)) return;
+    if (!replace && (this._loadingMore || this.data.loadingMore || !this.data.hasMore)) return;
     const requestId = ++this._billListRequestId;
     const yearMonth = this.data.yearMonth;
     const { filterType, filterPerson, filterCategory } = this.data;
-    if (!replace) this.setData({ loadingMore: true });
+    if (!replace) {
+      this._loadingMore = true;
+      this.setData({ loadingMore: true });
+    }
     try {
       const res = await wx.cloud.callFunction({
         name: 'getBills',
@@ -147,6 +167,11 @@ Page({
       console.error('加载账单失败', err);
       this.setData({ loading: false, loadingMore: false, listError: true });
       util.toast(replace ? '账单列表加载失败' : '加载更多失败，请重试');
+    } finally {
+      if (!replace && requestId === this._billListRequestId) {
+        this._loadingMore = false;
+        if (this.data.loadingMore) this.setData({ loadingMore: false });
+      }
     }
   },
 
@@ -174,11 +199,6 @@ Page({
       const res = await wx.cloud.callFunction({ name: 'getBillStats', data: { yearMonth: this.data.yearMonth } });
       if (requestId !== this._billStatsRequestId || version !== this._billViewVersion) return;
       const result = res.result || {};
-      console.log('[BillPage][STATS_RESPONSE]', {
-        success: result.success,
-        stats: result.stats || null,
-        budget: result.budget || null
-      });
       if (!result.success) throw new Error(result.msg || 'getBillStats failed');
       const raw = result.stats || {};
       this._billStats = raw;
@@ -291,6 +311,7 @@ Page({
 
   reloadFilteredList() {
     ++this._billListRequestId;
+    this._loadingMore = false;
     this.setData({ filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false, swipedId: '' });
     this.loadBillFirstPage(this._billViewVersion);
   },
@@ -601,8 +622,6 @@ Page({
       wx.hideLoading();
 
       const result = (res && res.result) || {};
-      console.log('[CSV导入] 云函数返回:', result);
-
       if (result.success) {
         const msg = '成功导入 ' + result.count + ' 条' +
           (result.fail > 0 ? '，' + result.fail + ' 条失败' : '') +

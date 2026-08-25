@@ -383,6 +383,7 @@
 }
 .list-footer, .list-error { padding: 24rpx; text-align: center; color: #aaa; font-size: 24rpx; }
 .list-error { color: #FF6B81; }
+.pagination-sentinel { height: 1px; }
 
 /* 右下角固定记账按钮，位于原生 TabBar 上方 */
 .add-fab {

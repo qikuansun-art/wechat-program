@@ -13,17 +13,14 @@ exports.main = async (event, context) => {
   const page = Math.max(0, parseInt(event.page, 10) || 0);
   const pageSize = Math.min(50, Math.max(1, parseInt(event.pageSize || event.limit, 10) || 20));
 
-  console.log('[getReports] OPENID:', OPENID, 'role:', role, 'status:', status, 'page:', page);
-
   try {
     const users = db.collection('users');
     const meRes = await users.where({ openid: OPENID }).get();
     if (meRes.data.length === 0) {
-      console.error('[getReports] 用户不存在, OPENID:', OPENID);
+      console.error('[getReports] 用户不存在');
       return { success: false, msg: '请先登录', list: [], hasMore: false };
     }
     const me = meRes.data[0];
-    console.log('[getReports] me._id:', me._id, 'me.partnerId:', me.partnerId);
 
     // 根据 role 严格构建查询条件（数据隔离核心）
     let where;
@@ -41,8 +38,6 @@ exports.main = async (event, context) => {
       ]);
     }
 
-    console.log('[getReports] where:', JSON.stringify(where));
-
     // 组装查询
     let query = db.collection('reports').where(where);
     if (status && ['pending', 'approved', 'rejected'].includes(status)) {
@@ -53,8 +48,6 @@ exports.main = async (event, context) => {
       .skip(page * pageSize)
       .limit(pageSize)
       .get();
-
-    console.log('[getReports] 返回', res.data.length, '条记录');
 
     return {
       success: true,
