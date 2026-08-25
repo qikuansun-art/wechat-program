@@ -1,0 +1,31 @@
+<view class="crop-page">
+  <view class="crop-title">选择展示区域</view>
+  <view class="crop-hint">拖动或缩放图片，选择想展示的部分</view>
+
+  <view class="crop-stage">
+    <movable-area class="crop-area">
+      <movable-view class="crop-image-view"
+        direction="all"
+        x="{{imageX}}"
+        y="{{imageY}}"
+        scale
+        scale-min="1"
+        scale-max="3"
+        scale-value="{{imageScale}}"
+        out-of-bounds="false"
+        bindchange="onImageMove"
+        bindscale="onImageScale"
+        style="width: {{displayWidth}}px; height: {{displayHeight}}px;">
+        <image class="crop-image" src="{{sourcePath}}" mode="scaleToFill" />
+      </movable-view>
+    </movable-area>
+    <view class="crop-frame"></view>
+  </view>
+
+  <view class="crop-actions">
+    <button class="crop-button cancel" bindtap="onCancel" disabled="{{exporting}}">取消</button>
+    <button class="crop-button confirm" bindtap="onConfirm" loading="{{exporting}}" disabled="{{!ready || exporting}}">使用此区域</button>
+  </view>
+
+  <canvas class="export-canvas" canvas-id="bannerCropCanvas"></canvas>
+</view>

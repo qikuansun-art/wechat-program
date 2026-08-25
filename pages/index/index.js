@@ -56,6 +56,7 @@ Page({
   async init() {
     const requestId = (this._initRequestId || 0) + 1;
     this._initRequestId = requestId;
+    const bannerStateVersion = this._bannerStateVersion || 0;
     const app = getApp();
     // 首次进入复用 App 启动登录；后续资料刷新设短缓存，避免每次 onShow 紧接着重复 login。
     const now = Date.now();
@@ -71,6 +72,7 @@ Page({
     if (requestId !== this._initRequestId) return;
     this._loaded = true;
     const newBanners = Array.isArray(userInfo.banners) ? userInfo.banners : [];
+    const bannerStateChanged = bannerStateVersion !== (this._bannerStateVersion || 0);
     console.log('[init] banners从DB获取:', newBanners.length, '个', newBanners.map(function (f) { return typeof f === 'string' ? f.slice(-20) : typeof f; }));
     const update = {
       loading: false,
@@ -80,16 +82,20 @@ Page({
     };
     // 仅在 banners 实际变化时才 setData，避免 swiper 被无谓重建导致滑动卡顿
     const oldBanners = this.data.banners;
-    if (newBanners.length !== oldBanners.length || newBanners.some((v, i) => v !== oldBanners[i])) {
+    if (!bannerStateChanged && (newBanners.length !== oldBanners.length || newBanners.some((v, i) => v !== oldBanners[i]))) {
       update.banners = newBanners;
     }
     this.setData(update);
-    const bannerKey = newBanners.join('|');
-    const bannerCacheExpired = Date.now() - (this._bannerUrlRefreshedAt || 0) > 20 * 60 * 1000;
-    const shouldRefreshBanner = bannerKey !== this._bannerFileKey ||
-      (newBanners.length > 0 && (this.data.bannerUrls.length === 0 || bannerCacheExpired));
-    this._bannerFileKey = bannerKey;
-    if (shouldRefreshBanner) this.refreshBannerUrls();
+    if (bannerStateChanged) {
+      app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners: this.data.banners.slice() });
+    } else {
+      const bannerKey = newBanners.join('|');
+      const bannerCacheExpired = Date.now() - (this._bannerUrlRefreshedAt || 0) > 20 * 60 * 1000;
+      const shouldRefreshBanner = bannerKey !== this._bannerFileKey ||
+        (newBanners.length > 0 && (this.data.bannerUrls.length === 0 || this.data.bannerLoadFailed || bannerCacheExpired));
+      this._bannerFileKey = bannerKey;
+      if (shouldRefreshBanner) this.refreshBannerUrls();
+    }
     if (userInfo.partnerId) {
       // 三个聚合模块互不依赖，并行加载；各自负责失败降级。
       Promise.allSettled([
@@ -225,7 +231,7 @@ Page({
     this.setData({ bannerCurrent: e.detail.current });
   },
 
-  /** 添加 Banner 图片（支持多选） */
+  /** 选择 Banner 图片，逐张进入固定比例裁剪页。 */
   async onAddBanner() {
     const app = getApp();
     if (!app.globalData.openid) {
@@ -255,17 +261,65 @@ Page({
       return;
     }
 
+    this._bannerCropQueue = tempFiles.map((file) => file.tempFilePath).filter(Boolean);
+    this._croppedBannerFiles = [];
     this.setData({ uploading: true });
-    wx.showLoading({ title: `上传中 0/${tempFiles.length}`, mask: true });
+    this.openNextBannerCrop();
+  },
+
+  openNextBannerCrop() {
+    if (!this._bannerCropQueue || this._bannerCropQueue.length === 0) {
+      const croppedFiles = (this._croppedBannerFiles || []).slice();
+      this._bannerCropQueue = [];
+      this._croppedBannerFiles = [];
+      if (croppedFiles.length === 0) {
+        this.setData({ uploading: false });
+        return;
+      }
+      this.uploadCroppedBanners(croppedFiles);
+      return;
+    }
+    const sourcePath = this._bannerCropQueue[0];
+    wx.navigateTo({
+      url: '/pages/banner-crop/banner-crop',
+      success: (navRes) => {
+        let settled = false;
+        navRes.eventChannel.on('bannerCropped', ({ tempFilePath }) => {
+          if (settled || !tempFilePath) return;
+          settled = true;
+          this._croppedBannerFiles.push(tempFilePath);
+          this._bannerCropQueue.shift();
+          setTimeout(() => this.openNextBannerCrop(), 80);
+        });
+        navRes.eventChannel.on('bannerCropCancelled', () => {
+          if (settled) return;
+          settled = true;
+          this._bannerCropQueue = [];
+          this._croppedBannerFiles = [];
+          this.setData({ uploading: false });
+        });
+        navRes.eventChannel.emit('cropSource', { tempFilePath: sourcePath });
+      },
+      fail: (err) => {
+        console.error('[onAddBanner] 打开裁剪页失败:', err);
+        this._bannerCropQueue = [];
+        this._croppedBannerFiles = [];
+        this.setData({ uploading: false });
+        util.toast('裁剪页面打开失败，请重试');
+      }
+    });
+  },
+
+  async uploadCroppedBanners(croppedFiles) {
+    const app = getApp();
+    wx.showLoading({ title: `上传中 0/${croppedFiles.length}`, mask: true });
     const fileIDs = [];
     try {
-      for (let i = 0; i < tempFiles.length; i++) {
-        const f = tempFiles[i];
-        const ext = (f.tempFilePath.match(/\.(\w+)$/) || [])[1] || 'jpg';
-        const cloudPath = `banners/${app.globalData.openid}/${Date.now()}-${i}.${ext}`;
-        const upRes = await wx.cloud.uploadFile({ cloudPath, filePath: f.tempFilePath });
+      for (let i = 0; i < croppedFiles.length; i++) {
+        const cloudPath = `banners/${app.globalData.openid}/${Date.now()}-${i}.jpg`;
+        const upRes = await wx.cloud.uploadFile({ cloudPath, filePath: croppedFiles[i] });
         fileIDs.push(upRes.fileID);
-        wx.showLoading({ title: `上传中 ${i + 1}/${tempFiles.length}`, mask: true });
+        wx.showLoading({ title: `上传中 ${i + 1}/${croppedFiles.length}`, mask: true });
       }
     } catch (err) {
       wx.hideLoading();
@@ -275,38 +329,52 @@ Page({
       return;
     }
 
-    try {
-      const funcRes = await wx.cloud.callFunction({
-        name: 'updateBanners',
-        data: { action: 'add', fileIDs }
-      });
-      wx.hideLoading();
-      this.setData({ uploading: false });
-      const result = funcRes.result || {};
-      if (result.success) {
-        app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners: result.banners });
-        this.setData({ banners: result.banners });
-        this.refreshBannerUrls(result.banners);
-        // 同步状态诊断日志
-        if (result.partnerId) {
-          console.log('[onAddBanner] 同步状态: partnerId=' + result.partnerId +
-            ', synced=' + (result.synced ? '✅' : '❌'));
-          if (!result.synced) {
-            console.warn('[onAddBanner] ⚠️ 伴侣同步失败！请确认 updateBanners 云函数已重新部署');
-          }
-        } else {
-          console.log('[onAddBanner] 用户未绑定伴侣，无需同步');
-        }
-        util.toast(`已添加 ${fileIDs.length} 张`);
-      } else {
-        util.toast(result.msg || '添加失败，请重试');
-      }
-    } catch (err) {
-      wx.hideLoading();
-      this.setData({ uploading: false });
-      console.error('[onAddBanner] 云函数调用失败', err);
-      util.toast('保存失败: ' + (err.errMsg || '未知错误'));
+    const result = await this.updateSharedBanners('add', { action: 'add', fileIDs }, fileIDs);
+
+    wx.hideLoading();
+    this.setData({ uploading: false });
+    if (result.uncertain) {
+      util.toast('操作状态未确认，请稍后刷新');
+      return;
     }
+    if (!result.success) {
+      util.toast(result.msg || '上传失败，请重试');
+      return;
+    }
+    app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners: result.banners });
+    const previewByFileID = {};
+    fileIDs.forEach((fileID, index) => { previewByFileID[fileID] = croppedFiles[index]; });
+    this.applyOptimisticBanners(result.banners, previewByFileID);
+    util.toast(`上传成功，共 ${fileIDs.length} 张`);
+    const refreshed = await this.refreshBannerUrls(result.banners);
+    if (!refreshed) util.toast('上传成功，Banner 刷新失败，请稍后重试');
+  },
+
+  currentBannerUrlMap() {
+    const map = {};
+    (this.data.banners || []).forEach((fileID, index) => {
+      if (this.data.bannerUrls[index]) map[fileID] = this.data.bannerUrls[index];
+    });
+    return map;
+  },
+
+  applyOptimisticBanners(banners, previewByFileID) {
+    const urlMap = Object.assign(this.currentBannerUrlMap(), previewByFileID || {});
+    const bannerUrls = banners.map((fileID) => urlMap[fileID] || '');
+    this._bannerStateVersion = (this._bannerStateVersion || 0) + 1;
+    this._bannerRequestId = (this._bannerRequestId || 0) + 1;
+    this._manageBannerRequestId = (this._manageBannerRequestId || 0) + 1;
+    const update = {
+      banners: banners.slice(),
+      bannerUrls: bannerUrls.slice(),
+      bannerCurrent: Math.min(this.data.bannerCurrent, Math.max(0, banners.length - 1)),
+      bannerLoadFailed: false
+    };
+    if (this.data.showBannerManage) {
+      update.manageBanners = banners.slice();
+      update.manageBannerUrls = bannerUrls.slice();
+    }
+    this.setData(update);
   },
 
   /** 打开 Banner 管理弹层 */
@@ -350,32 +418,141 @@ Page({
   },
 
   /** 由受控云函数读取真实 Banner 并生成临时 URL。 */
-  async refreshBannerUrls() {
-    const requestId = (this._bannerRequestId || 0) + 1;
-    this._bannerRequestId = requestId;
+  async fetchSharedBannersResult() {
     try {
       const res = await wx.cloud.callFunction({ name: 'getSharedBanners', data: {} });
-      if (requestId !== this._bannerRequestId) return;
-      const result = res.result || {};
-      if (!result.success) {
-        console.error('[refreshBannerUrls] 加载失败:', result.code || '', result.msg || '');
-        this.setData({ bannerUrls: [], bannerLoadFailed: true });
-        return;
+      return res.result || {};
+    } catch (err) {
+      console.error('[fetchSharedBannersResult] 云函数调用失败:', err);
+      return null;
+    }
+  },
+
+  bannerLogTargets(fileIDs) {
+    return (fileIDs || []).map((fileID) => `...${String(fileID).slice(-16)}`);
+  },
+
+  async reconcileBannerMutation(action, targetFileIDs) {
+    const targets = Array.isArray(targetFileIDs) ? targetFileIDs : [targetFileIDs];
+    console.log('[BannerMutation][RECONCILE_START]', {
+      action,
+      expectedTargets: this.bannerLogTargets(targets)
+    });
+    const result = await this.fetchSharedBannersResult();
+    if (!result || !result.success || !Array.isArray(result.banners)) {
+      console.warn('[BannerMutation][RECONCILE_UNAVAILABLE]', {
+        action,
+        code: result && result.code || '',
+        message: result && result.msg || ''
+      });
+      return { available: false, confirmed: false, banners: [] };
+    }
+    const banners = result.banners.slice();
+    const confirmed = action === 'add'
+      ? targets.every((fileID) => banners.includes(fileID))
+      : targets.every((fileID) => !banners.includes(fileID));
+    console.log('[BannerMutation][RECONCILE_RESULT]', {
+      action,
+      returnedCount: banners.length,
+      returnedTargets: this.bannerLogTargets(banners),
+      expectedTargets: this.bannerLogTargets(targets),
+      confirmed
+    });
+    return { available: true, confirmed, banners };
+  },
+
+  async updateSharedBanners(action, data, targetFileIDs) {
+    const targets = Array.isArray(targetFileIDs) ? targetFileIDs : [targetFileIDs];
+    console.log('[BannerMutation][CALL_START]', {
+      action,
+      targets: this.bannerLogTargets(targets)
+    });
+    let result = null;
+    let rejectedError = null;
+    try {
+      const funcRes = await wx.cloud.callFunction({ name: 'updateBanners', data });
+      result = funcRes.result || {};
+      console.log('[BannerMutation][CALL_RESOLVE]', {
+        action,
+        requestID: funcRes.requestID || '',
+        success: result.success === true,
+        code: result.code || '',
+        bannerCount: Array.isArray(result.banners) ? result.banners.length : null
+      });
+      if (result.success) {
+        console.log('[BannerMutation][FINAL_DECISION]', { action, success: true, source: 'response' });
+        return result;
+      }
+      // 明确的参数、权限或业务校验失败不是响应歧义，不用数据库事实覆盖。
+      if (result.code && result.code !== 'TRANSACTION_FAILED') {
+        console.log('[BannerMutation][FINAL_DECISION]', { action, success: false, source: 'business-response', code: result.code });
+        return result;
+      }
+    } catch (err) {
+      rejectedError = err;
+      console.error('[BannerMutation][CALL_REJECT]', {
+        action,
+        requestID: err && err.requestID || '',
+        errCode: err && err.errCode || '',
+        errMsg: err && err.errMsg || err && err.message || ''
+      });
+    }
+
+    const reconciled = await this.reconcileBannerMutation(action, targets);
+    if (reconciled.confirmed) {
+      console.log('[BannerMutation][FINAL_DECISION]', { action, success: true, source: 'database-reconciliation' });
+      return { success: true, banners: reconciled.banners, reconciled: true };
+    }
+    if (!reconciled.available) {
+      console.warn('[BannerMutation][FINAL_DECISION]', { action, success: false, uncertain: true, source: 'reconciliation-unavailable' });
+      return { success: false, uncertain: true, code: 'BANNER_STATE_UNCONFIRMED' };
+    }
+    console.warn('[BannerMutation][FINAL_DECISION]', {
+      action,
+      success: false,
+      source: 'database-reconciliation',
+      code: result && result.code || rejectedError && rejectedError.errCode || 'TARGET_STATE_NOT_APPLIED'
+    });
+    return result || { success: false, msg: '操作失败，请重试', code: 'TARGET_STATE_NOT_APPLIED' };
+  },
+
+  async refreshBannerUrls(expectedBanners) {
+    const requestId = (this._bannerRequestId || 0) + 1;
+    this._bannerRequestId = requestId;
+    const bannerStateVersion = this._bannerStateVersion || 0;
+    try {
+      const result = await this.fetchSharedBannersResult();
+      if (requestId !== this._bannerRequestId || bannerStateVersion !== (this._bannerStateVersion || 0)) return false;
+      if (!result || !result.success) {
+        console.error('[refreshBannerUrls] 加载失败:', result && result.code || '', result && result.msg || '');
+        this.setData({ bannerLoadFailed: true });
+        return false;
       }
       const banners = Array.isArray(result.banners) ? result.banners : [];
+      if (Array.isArray(expectedBanners) &&
+        (banners.length !== expectedBanners.length || banners.some((fileID, index) => fileID !== expectedBanners[index]))) {
+        console.warn('[refreshBannerUrls] 返回的 Banner 版本落后，保留当前本地预览');
+        this.setData({ bannerLoadFailed: true });
+        return false;
+      }
       const items = Array.isArray(result.items) ? result.items : [];
-      const urls = items.filter((item) => item.success && item.tempURL).map((item) => item.tempURL);
-      const failedCount = items.length - urls.length;
-      if (failedCount > 0) console.warn('[refreshBannerUrls] 有 ' + failedCount + ' 张图片暂时无法加载，已安全跳过');
+      const oldUrlMap = this.currentBannerUrlMap();
+      const itemMap = {};
+      items.forEach((item) => { if (item.success && item.tempURL) itemMap[item.fileID] = item.tempURL; });
+      const urls = banners.map((fileID) => itemMap[fileID] || oldUrlMap[fileID] || '');
+      const failedCount = banners.filter((fileID) => !itemMap[fileID]).length;
+      if (failedCount > 0) console.warn('[refreshBannerUrls] 有 ' + failedCount + ' 张图片暂时无法刷新，已保留现有预览');
       const app = getApp();
       app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners });
       this._bannerFileKey = banners.join('|');
       this._bannerUrlRefreshedAt = Date.now();
-      this.setData({ banners, bannerUrls: urls, bannerLoadFailed: banners.length > 0 && urls.length === 0 });
+      this.setData({ banners: banners.slice(), bannerUrls: urls.slice(), bannerLoadFailed: failedCount > 0 });
+      return failedCount === 0;
     } catch (err) {
-      if (requestId !== this._bannerRequestId) return;
+      if (requestId !== this._bannerRequestId) return false;
       console.error('[refreshBannerUrls] 云函数调用失败:', err);
-      this.setData({ bannerUrls: [], bannerLoadFailed: true });
+      this.setData({ bannerLoadFailed: true });
+      return false;
     }
   },
 
@@ -407,31 +584,26 @@ Page({
     const idx = e.currentTarget.dataset.idx;
     const fileID = this.data.manageBanners[idx];
     wx.showLoading({ title: '删除中...', mask: true });
-    try {
-      const funcRes = await wx.cloud.callFunction({
-        name: 'updateBanners',
-        data: { action: 'remove', fileID }
-      });
-      wx.hideLoading();
-      const result = funcRes.result || {};
-      if (result.success) {
-        const app = getApp();
-        app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners: result.banners });
-        this.setData({ banners: result.banners, manageBanners: [...result.banners] });
-        this.refreshBannerUrls(result.banners);
-        // 同步更新管理弹层的临时 URL
-        this.refreshManageBannerUrls(result.banners);
-        if (result.banners.length === 0) {
-          this.setData({ showBannerManage: false });
-        }
-        util.toast('已删除');
-      } else {
-        util.toast(result.msg || '删除失败');
-      }
-    } catch (err) {
-      wx.hideLoading();
-      console.error('删除Banner失败', err);
-      util.toast('删除失败，请重试');
+    const result = await this.updateSharedBanners('remove', { action: 'remove', fileID }, [fileID]);
+    wx.hideLoading();
+    if (result.uncertain) {
+      util.toast('操作状态未确认，请稍后刷新');
+      return;
+    }
+    if (!result.success) {
+      util.toast(result.msg || '删除失败');
+      return;
+    }
+    const app = getApp();
+    app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners: result.banners });
+    this.applyOptimisticBanners(result.banners);
+    if (result.banners.length === 0) this.setData({ showBannerManage: false });
+    util.toast('删除成功');
+    const refreshed = await this.refreshBannerUrls(result.banners);
+    if (!refreshed) {
+      util.toast('删除成功，Banner 刷新失败，请稍后重试');
+    } else if (this.data.showBannerManage) {
+      this.setData({ manageBannerUrls: this.data.bannerUrls.slice() });
     }
   },
 

@@ -1,0 +1,33 @@
+.crop-page {
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 44rpx 24rpx calc(40rpx + env(safe-area-inset-bottom));
+  background: #1F2024;
+  color: #FFFFFF;
+}
+.crop-title { text-align: center; font-size: 36rpx; font-weight: 650; }
+.crop-hint { margin-top: 14rpx; text-align: center; color: rgba(255,255,255,.68); font-size: 25rpx; }
+.crop-stage { position: relative; width: 702rpx; height: 320rpx; margin-top: 88rpx; overflow: hidden; border-radius: 24rpx; background: #111216; }
+.crop-area { width: 702rpx; height: 320rpx; overflow: hidden; }
+.crop-image-view { display: block; }
+.crop-image { width: 100%; height: 100%; display: block; }
+.crop-frame { position: absolute; inset: 0; z-index: 5; border: 3rpx solid rgba(255,255,255,.92); border-radius: 24rpx; box-sizing: border-box; pointer-events: none; box-shadow: inset 0 0 0 2rpx rgba(255,107,129,.4); }
+.crop-actions { position: fixed; left: 24rpx; right: 24rpx; bottom: calc(36rpx + env(safe-area-inset-bottom)); display: flex; gap: 20rpx; }
+.crop-button {
+  flex: 1;
+  height: 92rpx;
+  min-height: 92rpx;
+  padding: 0;
+  border: 0;
+  border-radius: 46rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.2;
+  font-size: 30rpx;
+  box-sizing: border-box;
+}
+.crop-button::after { border: 0; }
+.crop-button.cancel { color: #FFFFFF; background: rgba(255,255,255,.14); }
+.crop-button.confirm { color: #FFFFFF; background: linear-gradient(135deg, #FF8FA3, #FF607A); box-shadow: 0 10rpx 28rpx rgba(255,96,122,.28); }
+.export-canvas { position: fixed; left: -2000px; top: -2000px; width: 1080px; height: 492px; pointer-events: none; }

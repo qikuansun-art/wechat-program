@@ -710,16 +710,16 @@ function assert(cond, msg) {
 
   assert(appConfig.pages.includes(schedulePagePath) && appConfig.pages.includes(scheduleEditPath), '日程页面：主页和编辑页已在 app.json 注册');
   const expectedTabPages = ['pages/index/index', 'pages/bill/bill', 'pages/record/record', schedulePagePath, 'pages/mine/mine'];
-  const expectedTabTexts = ['首页', '账单', '记录', '日程', '我的'];
+  const expectedTabTexts = ['首页', '账单', '报备', '日程', '我的'];
   assert(appConfig.tabBar.list.length === 5 && deepEqual(appConfig.tabBar.list.map((item) => item.pagePath), expectedTabPages) &&
     deepEqual(appConfig.tabBar.list.map((item) => item.text), expectedTabTexts),
-    'TabBar：正好 5 项，顺序为首页/账单/记录/日程/我的');
+    'TabBar：正好 5 项，顺序为首页/账单/报备/日程/我的');
   const scheduleTab = appConfig.tabBar.list[3];
   assert(scheduleTab.pagePath === schedulePagePath &&
     fs.existsSync(path.join(__dirname, '..', scheduleTab.iconPath)) && fs.existsSync(path.join(__dirname, '..', scheduleTab.selectedIconPath)),
     'TabBar：日程普通及选中图标均指向真实文件');
   assert(expectedTabPages.slice(0, 3).concat(expectedTabPages[4]).every((pagePath) => appConfig.tabBar.list.some((item) => item.pagePath === pagePath)),
-    'TabBar：原有首页、账单、记录、我的入口全部保留');
+    'TabBar：原有首页、账单、报备、我的入口全部保留');
   const calendarCells = calendarUtil.buildMonth(2026, 8, { today: '2026-08-24', selectedDate: '2026-08-24', markedDates: { '2026-08-24': true } });
   assert(calendarCells.length === 42 && calendarCells.filter((item) => item.currentMonth).length === 31,
     '月历工具：固定生成 6×7 共 42 格并正确包含当月天数');
@@ -872,6 +872,77 @@ function assert(cond, msg) {
 
   // ---------- Banner 原子同步与受控访问 ----------
   console.log('\n== Banner 原子同步与受控访问 ==');
+  const bannerCropPath = 'pages/banner-crop/banner-crop';
+  const bannerCropJs = fs.readFileSync(path.join(__dirname, '..', bannerCropPath + '.js'), 'utf8');
+  const bannerCropWxml = fs.readFileSync(path.join(__dirname, '..', bannerCropPath + '.wxml'), 'utf8');
+  const bannerCropWxss = fs.readFileSync(path.join(__dirname, '..', bannerCropPath + '.wxss'), 'utf8');
+  assert(appConfig.pages.includes(bannerCropPath) && indexJs.includes("url: '/pages/banner-crop/banner-crop'") &&
+    indexJs.includes("navRes.eventChannel.emit('cropSource'"), 'Banner 裁剪：选择图片后进入已注册的原生裁剪页');
+  assert(bannerCropWxss.includes('width: 702rpx') && bannerCropWxss.includes('height: 320rpx') &&
+    bannerCropJs.includes('const AREA_WIDTH_RPX = 702') && bannerCropJs.includes('const AREA_HEIGHT_RPX = 320'),
+    'Banner 裁剪：裁剪框固定匹配首页 702rpx × 320rpx 横幅比例');
+  assert(bannerCropJs && bannerCropWxml.includes('选择展示区域') &&
+    bannerCropWxml.includes('拖动或缩放图片，选择想展示的部分') &&
+    !bannerCropWxml.includes('Banner'),
+    'Banner 裁剪文案：面向用户使用展示区域表述，不显示技术术语');
+  assert(/\.crop-button\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*center;/s.test(bannerCropWxss) &&
+    /\.crop-button\s*\{[^}]*height:\s*92rpx;[^}]*min-height:\s*92rpx;[^}]*padding:\s*0;/s.test(bannerCropWxss),
+    'Banner 裁剪按钮：等高 flex 布局且文字水平垂直居中');
+  assert(bannerCropWxml.includes('<movable-area') && bannerCropWxml.includes('<movable-view') &&
+    bannerCropWxml.includes('direction="all"') && bannerCropWxml.includes('scale-min="1"') && bannerCropWxml.includes('scale-max="3"'),
+    'Banner 裁剪：图片支持原生拖动和 1～3 倍双指缩放');
+  assert(bannerCropWxml.includes('canvas-id="bannerCropCanvas"') && bannerCropJs.includes("wx.createCanvasContext('bannerCropCanvas'") &&
+    bannerCropJs.includes('wx.canvasToTempFilePath') && bannerCropJs.includes('const OUTPUT_WIDTH = 1080') &&
+    bannerCropJs.includes('const OUTPUT_HEIGHT = 492') && bannerCropJs.includes("fileType: 'jpg'") && bannerCropJs.includes('quality: 0.86'),
+    'Banner 裁剪：使用真实小程序 Canvas API 输出 1080×492 压缩 JPEG');
+  assert(indexJs.includes('uploadCroppedBanners(croppedFiles)') &&
+    indexJs.includes('filePath: croppedFiles[i]') && !indexJs.includes('filePath: f.tempFilePath'),
+    'Banner 上传：只上传 Canvas 裁剪结果，不再上传选择的原始大图');
+  assert(bannerCropJs.includes("emit('bannerCropCancelled')") && indexJs.includes("on('bannerCropCancelled'") &&
+    indexJs.includes('this._croppedBannerFiles = []'), 'Banner 裁剪：取消或直接返回会清空队列且不上传');
+  assert(indexJs.includes("util.toast('图片上传失败:") && indexJs.includes("result.msg || '上传失败，请重试'") &&
+    indexJs.includes('上传成功，Banner 刷新失败，请稍后重试'), 'Banner 上传：uploadFile、业务更新和后续刷新使用分层反馈');
+  assert(indexJs.includes("updateSharedBanners('add'") && indexJs.includes("result.code !== 'TRANSACTION_FAILED'") &&
+    indexJs.includes("source: 'database-reconciliation'"),
+    'Banner 上传：reject 或技术性失败响应都会通过数据库事实对账，已成功入库不再误报失败');
+  assert(indexJs.includes("action === 'add'") && indexJs.includes('targets.every((fileID) => banners.includes(fileID))') &&
+    indexJs.includes('targets.every((fileID) => !banners.includes(fileID))'),
+    'Banner 对账：上传只验证目标 fileID 存在，删除只验证目标 fileID 不存在，不要求完整数组相等');
+  assert(indexJs.includes("updateSharedBanners('remove'") && indexJs.includes("code: 'BANNER_STATE_UNCONFIRMED'") &&
+    indexJs.includes("util.toast('操作状态未确认，请稍后刷新')"),
+    'Banner 删除：响应异常可对账，仅在无法读取数据库事实时提示状态未确认');
+  assert(indexJs.includes('[BannerMutation][CALL_START]') && indexJs.includes('[BannerMutation][CALL_RESOLVE]') &&
+    indexJs.includes('[BannerMutation][CALL_REJECT]') && indexJs.includes('[BannerMutation][RECONCILE_RESULT]') &&
+    indexJs.includes('[BannerMutation][FINAL_DECISION]'),
+    'Banner 诊断：前端记录调用、响应、对账和最终判定且只输出脱敏 fileID');
+  const updateBannersJs = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'updateBanners', 'index.js'), 'utf8');
+  assert(updateBannersJs.includes('[updateBanners][TRANSACTION_START]') &&
+    updateBannersJs.includes('[updateBanners][TRANSACTION_SUCCESS]') &&
+    updateBannersJs.includes('[updateBanners][FUNCTION_RETURN_SUCCESS]') &&
+    updateBannersJs.includes('[updateBanners][FUNCTION_ERROR]'),
+    'Banner 诊断：云函数清晰区分事务成功、函数返回成功和函数错误');
+  assert(updateBannersJs.includes('let committedBanners = []') &&
+    !updateBannersJs.includes('txRes.result.banners'),
+    'Banner 云函数：事务提交后使用已提交快照构造响应，不依赖 SDK 返回包装结构');
+  assert(indexJs.includes('applyOptimisticBanners(result.banners, previewByFileID)') &&
+    indexJs.includes('previewByFileID[fileID] = croppedFiles[index]'), 'Banner 上传：业务成功后立即使用裁剪本地路径乐观显示');
+  assert(indexJs.includes('applyOptimisticBanners(result.banners)') && indexJs.includes("util.toast('删除成功')"),
+    'Banner 删除：业务成功后立即从当前页面和管理列表移除');
+  assert(indexJs.includes('this._bannerStateVersion = (this._bannerStateVersion || 0) + 1') &&
+    indexJs.includes('bannerStateVersion !== (this._bannerStateVersion || 0)') &&
+    indexJs.includes('this._bannerRequestId = (this._bannerRequestId || 0) + 1'),
+    'Banner 即时显示：乐观更新递增状态版本并使上传前的 Banner 请求失效');
+  assert(indexJs.includes('refreshBannerUrls(result.banners)') &&
+    indexJs.includes('返回的 Banner 版本落后，保留当前本地预览') &&
+    indexJs.includes('banners: banners.slice()') && indexJs.includes('bannerUrls: bannerUrls.slice()'),
+    'Banner 即时显示：后台刷新只接受预期版本，并使用新数组引用更新 swiper 数据源');
+  assert(indexJs.includes('const bannerStateVersion = this._bannerStateVersion || 0') &&
+    indexJs.includes('if (!bannerStateChanged &&') && indexJs.includes('banners: this.data.banners.slice()'),
+    'Banner 即时显示：裁剪返回触发的旧 init 不会覆盖刚完成的上传或删除状态');
+  assert(indexJs.includes('this.data.bannerLoadFailed || bannerCacheExpired') && indexJs.includes('this.refreshBannerUrls()'),
+    'Banner 刷新：失败状态在下次 onShow 初始化时自动重试');
+  assert(indexJs.includes('saveReorder(list)') && indexJs.includes("data: { action: 'reorder', order: list }") &&
+    indexJs.includes('currentCount >= 10'), 'Banner 兼容：现有排序流程和最多 10 张限制保持不变');
   const banner1 = 'cloud://test-env/banners/a-1.jpg';
   const banner2 = 'cloud://test-env/banners/a-2.jpg';
   const banner3 = 'cloud://test-env/banners/a-3.jpg';

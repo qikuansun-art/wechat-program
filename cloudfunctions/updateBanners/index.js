@@ -67,12 +67,20 @@ function applyAction(current, event) {
 exports.main = async (event = {}) => {
   const { OPENID } = cloud.getWXContext();
   const users = db.collection('users');
+  const action = event.action || 'unknown';
+  const targetFileIDs = action === 'add'
+    ? (Array.isArray(event.fileIDs) ? event.fileIDs : [event.fileID]).filter(Boolean)
+    : [event.fileID].filter(Boolean);
+  const safeTargets = targetFileIDs.map((fileID) => `...${String(fileID).slice(-16)}`);
   try {
     const meRes = await users.where({ openid: OPENID }).get();
     if (meRes.data.length !== 1) return { success: false, msg: '请先登录', code: 'USER_NOT_FOUND' };
     const meId = meRes.data[0]._id;
 
-    const txRes = await db.runTransaction(async (transaction) => {
+    let committedBanners = [];
+    let committedPartnerId = '';
+    console.log('[updateBanners][TRANSACTION_START]', { action, targets: safeTargets });
+    await db.runTransaction(async (transaction) => {
       const meRef = transaction.collection('users').doc(meId);
       const freshMeRes = await meRef.get();
       const me = freshMeRes && freshMeRes.data;
@@ -101,13 +109,31 @@ exports.main = async (event = {}) => {
       const banners = applyAction(meBanners, event);
       await meRef.update({ data: { banners } });
       if (partnerRef) await partnerRef.update({ data: { banners } });
+      committedBanners = banners.slice();
+      committedPartnerId = me.partnerId || '';
       return { banners, partnerId: me.partnerId || '' };
     });
 
-    return { success: true, banners: txRes.result.banners, synced: !!txRes.result.partnerId, partnerId: txRes.result.partnerId };
+    console.log('[updateBanners][TRANSACTION_SUCCESS]', {
+      action,
+      bannerCount: committedBanners.length,
+      synced: !!committedPartnerId
+    });
+    const response = {
+      success: true,
+      banners: committedBanners,
+      synced: !!committedPartnerId,
+      partnerId: committedPartnerId
+    };
+    console.log('[updateBanners][FUNCTION_RETURN_SUCCESS]', { action, bannerCount: committedBanners.length });
+    return response;
   } catch (err) {
+    console.error('[updateBanners][FUNCTION_ERROR]', {
+      action,
+      code: err && (err.code || err.errCode) || '',
+      message: err && (err.errMsg || err.message) || String(err || '')
+    });
     if (err && err.name === 'BusinessError') return { success: false, msg: err.message, code: err.code };
-    console.error('[updateBanners] transaction failed:', err && (err.errMsg || err.message || err));
     return { success: false, msg: '操作失败，请重试', code: 'TRANSACTION_FAILED' };
   }
 };

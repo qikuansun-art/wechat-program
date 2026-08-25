@@ -10,7 +10,8 @@
     "pages/bill-edit/bill-edit",
     "pages/apply/apply",
     "pages/schedule/schedule",
-    "pages/schedule-edit/schedule-edit"
+    "pages/schedule-edit/schedule-edit",
+    "pages/banner-crop/banner-crop"
   ],
   "window": {
     "backgroundTextStyle": "light",
@@ -41,7 +42,7 @@
         "pagePath": "pages/record/record",
         "iconPath": "images/tab-record-gray.png",
         "selectedIconPath": "images/tab-record-pink.png",
-        "text": "记录"
+        "text": "报备"
       },
       {
         "pagePath": "pages/schedule/schedule",
