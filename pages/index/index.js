@@ -15,14 +15,20 @@ Page({
     bannerUrls: [],       // 受控云函数生成的临时 URL 数组
     bannerLoadFailed: false,
 
-    // 记账入口
-    billMonthExpense: null,
+    // 今日安排（首页最多展示 5 条）
+    todaySchedules: [],
+    todayScheduleTotal: 0,
+    todayScheduleHasMore: false,
+    todayScheduleLoading: false,
+    todayScheduleError: false,
 
     // 最近报备
     latestReports: [],
 
     // 待审批列表
     pendingReports: [],
+    pendingLoading: false,
+    pendingError: false,
 
     // Banner 当前页
     bannerCurrent: 0,
@@ -48,17 +54,21 @@ Page({
   },
 
   async init() {
+    const requestId = (this._initRequestId || 0) + 1;
+    this._initRequestId = requestId;
     const app = getApp();
-    // 已登录时强制从数据库刷新，确保能看到伴侣同步过来的轮播图等最新数据
-    // 未登录时才走 ensureLogin 首次登录流程
-    const userInfo = app.globalData.userInfo
-      ? await app.refreshUserInfo()
-      : await app.ensureLogin();
+    // 首次进入复用 App 启动登录；后续资料刷新设短缓存，避免每次 onShow 紧接着重复 login。
+    const now = Date.now();
+    const shouldRefreshUser = this._loaded && now - (this._lastUserRefreshAt || 0) > 30000;
+    const userInfo = shouldRefreshUser ? await app.refreshUserInfo() : await app.ensureLogin();
+    if (shouldRefreshUser || !this._lastUserRefreshAt) this._lastUserRefreshAt = now;
     if (!userInfo) {
+      if (requestId !== this._initRequestId) return;
       util.toast('登录失败，请重试');
       this.setData({ loading: false });
       return;
     }
+    if (requestId !== this._initRequestId) return;
     this._loaded = true;
     const newBanners = Array.isArray(userInfo.banners) ? userInfo.banners : [];
     console.log('[init] banners从DB获取:', newBanners.length, '个', newBanners.map(function (f) { return typeof f === 'string' ? f.slice(-20) : typeof f; }));
@@ -74,41 +84,91 @@ Page({
       update.banners = newBanners;
     }
     this.setData(update);
-    await this.refreshBannerUrls();
+    const bannerKey = newBanners.join('|');
+    const bannerCacheExpired = Date.now() - (this._bannerUrlRefreshedAt || 0) > 20 * 60 * 1000;
+    const shouldRefreshBanner = bannerKey !== this._bannerFileKey ||
+      (newBanners.length > 0 && (this.data.bannerUrls.length === 0 || bannerCacheExpired));
+    this._bannerFileKey = bannerKey;
+    if (shouldRefreshBanner) this.refreshBannerUrls();
     if (userInfo.partnerId) {
-      this.loadBillMonthExpense();
-      this.loadLatestReports();
-      this.loadPendingReports();
+      // 三个聚合模块互不依赖，并行加载；各自负责失败降级。
+      Promise.allSettled([
+        this.loadTodaySchedules(),
+        this.loadPendingReports(),
+        this.loadLatestReports()
+      ]);
       // 仅首次加载时兜底引导授权，避免每次 onShow 都弹窗骚扰用户
       if (this._isFirstLoad) {
         this.requestSubscriptions();
         this._isFirstLoad = false;
       }
+    } else {
+      this.setData({
+        todaySchedules: [], todayScheduleTotal: 0, todayScheduleHasMore: false, todayScheduleError: false,
+        pendingReports: [], pendingError: false, latestReports: []
+      });
     }
   },
 
-  /** 加载本月支出 */
-  async loadBillMonthExpense() {
+  /** 按 Asia/Shanghai 日期语义生成 YYYY-MM-DD。 */
+  shanghaiToday() {
+    const shifted = new Date(Date.now() + 8 * 60 * 60 * 1000);
+    return `${shifted.getUTCFullYear()}-${String(shifted.getUTCMonth() + 1).padStart(2, '0')}-${String(shifted.getUTCDate()).padStart(2, '0')}`;
+  },
+
+  /** 首页只加载今天，最多渲染 5 条。 */
+  async loadTodaySchedules() {
+    const requestId = (this._scheduleRequestId || 0) + 1;
+    this._scheduleRequestId = requestId;
+    this.setData({ todayScheduleLoading: true, todayScheduleError: false });
     try {
       const res = await wx.cloud.callFunction({
-        name: 'getBillStats',
-        data: { yearMonth: util.monthOf(new Date()) }
+        name: 'getSchedules',
+        data: { date: this.shanghaiToday() }
       });
-      const stats = (res.result && res.result.stats) || {};
-      this.setData({ billMonthExpense: (Number(stats.expense) || 0).toFixed(2) });
+      if (requestId !== this._scheduleRequestId) return;
+      const result = res.result || {};
+      if (!result.success) throw new Error(result.msg || '今日安排加载失败');
+      const list = Array.isArray(result.list) ? result.list : [];
+      const todaySchedules = list.slice(0, 5).map((item) => ({
+        id: item.scheduleId || item._id,
+        scheduleId: item.scheduleId || item._id,
+        occurrenceDate: item.occurrenceDate || item.date,
+        instanceKey: item.instanceKey || `${item.scheduleId || item._id}:${item.occurrenceDate || item.date}`,
+        title: item.title || '',
+        timeText: item.startTime || '全天',
+        ownerLabel: item.ownerLabel || '双人',
+        ownerClass: item.ownerType === 'personal' ? (item.ownerLabel === '我的' ? 'mine' : 'partner') : 'couple',
+        typeText: item.type === 'todo' ? '待办' : item.type === 'checkin' ? '打卡' : '日程',
+        typeClass: item.type || 'schedule',
+        stateText: item.type === 'checkin' ? (item.completed ? '已打卡' : '待打卡') : (item.completed ? '已完成' : '待完成'),
+        completed: !!item.completed,
+        toggling: false
+      }));
+      this.setData({
+        todaySchedules,
+        todayScheduleTotal: list.length,
+        todayScheduleHasMore: list.length > 5,
+        todayScheduleLoading: false,
+        todayScheduleError: false
+      });
     } catch (err) {
-      console.error('加载本月支出失败', err);
-      this.setData({ billMonthExpense: null });
+      if (requestId !== this._scheduleRequestId) return;
+      console.error('加载今日安排失败', err);
+      this.setData({ todaySchedules: [], todayScheduleTotal: 0, todayScheduleHasMore: false, todayScheduleLoading: false, todayScheduleError: true });
     }
   },
 
   /** 加载最近 2 条自己发起的报备 */
   async loadLatestReports() {
+    const requestId = (this._latestRequestId || 0) + 1;
+    this._latestRequestId = requestId;
     try {
       const res = await wx.cloud.callFunction({
         name: 'getReports',
         data: { role: 'creator', limit: 2 }
       });
+      if (!res.result || !res.result.success) throw new Error((res.result && res.result.msg) || '最近报备加载失败');
       const list = (res.result && res.result.list) || [];
       const reports = list.map((report) => ({
         id: report._id,
@@ -118,25 +178,32 @@ Page({
         statusText: util.statusText(report.status),
         statusClass: util.statusClass(report.status)
       }));
+      if (requestId !== this._latestRequestId) return;
       this.setData({ latestReports: reports });
     } catch (err) {
+      if (requestId !== this._latestRequestId) return;
       console.error('加载最近报备失败', err);
+      this.setData({ latestReports: [] });
     }
   },
 
   /** 加载待我审批的报备列表 */
   async loadPendingReports() {
+    const requestId = (this._pendingRequestId || 0) + 1;
+    this._pendingRequestId = requestId;
+    this.setData({ pendingLoading: true, pendingError: false });
     try {
       const app = getApp();
       const myId = app.globalData.userInfo && app.globalData.userInfo._id;
       const res = await wx.cloud.callFunction({
         name: 'getReports',
-        data: { status: 'pending', pageSize: 10 }
+        data: { role: 'approver', status: 'pending', pageSize: 3 }
       });
+      if (!res.result || !res.result.success) throw new Error((res.result && res.result.msg) || '待审批加载失败');
       const list = (res.result && res.result.list) || [];
-      // 筛选：审批人是当前用户（即等待我审批的）
       const pending = list
-        .filter(r => r.partnerId === myId)
+        .filter(r => r.status === 'pending' && r.partnerId === myId)
+        .slice(0, 3)
         .map(r => ({
           id: r._id,
           location: r.location,
@@ -144,9 +211,12 @@ Page({
           createdAtText: util.prettyTime(r.createdAt),
           reason: r.reason || ''
         }));
-      this.setData({ pendingReports: pending });
+      if (requestId !== this._pendingRequestId) return;
+      this.setData({ pendingReports: pending, pendingLoading: false, pendingError: false });
     } catch (err) {
+      if (requestId !== this._pendingRequestId) return;
       console.error('加载待审批列表失败', err);
+      this.setData({ pendingReports: [], pendingLoading: false, pendingError: true });
     }
   },
 
@@ -299,6 +369,8 @@ Page({
       if (failedCount > 0) console.warn('[refreshBannerUrls] 有 ' + failedCount + ' 张图片暂时无法加载，已安全跳过');
       const app = getApp();
       app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners });
+      this._bannerFileKey = banners.join('|');
+      this._bannerUrlRefreshedAt = Date.now();
       this.setData({ banners, bannerUrls: urls, bannerLoadFailed: banners.length > 0 && urls.length === 0 });
     } catch (err) {
       if (requestId !== this._bannerRequestId) return;
@@ -423,6 +495,69 @@ Page({
   /** 去申请页（报备表单） */
   goApply() {
     wx.navigateTo({ url: '/pages/apply/apply' });
+  },
+
+  /** 快速新建今天的日程 */
+  goScheduleCreate() {
+    wx.navigateTo({ url: `/pages/schedule-edit/schedule-edit?date=${this.shanghaiToday()}` });
+  },
+
+  /** 查看完整日程 */
+  goScheduleAll() {
+    wx.switchTab({ url: '/pages/schedule/schedule' });
+  },
+
+  /** 查看日程规则详情 */
+  goScheduleDetail(e) {
+    const id = e.currentTarget.dataset.id;
+    if (id) wx.navigateTo({ url: '/pages/schedule-edit/schedule-edit?id=' + id });
+  },
+
+  /** 首页只切换当前实例，不触发 init 或其他模块请求。 */
+  async onTodayToggle(e) {
+    const instanceKey = e.currentTarget.dataset.instanceKey;
+    const scheduleId = e.currentTarget.dataset.scheduleId;
+    const occurrenceDate = e.currentTarget.dataset.occurrenceDate;
+    const completed = e.currentTarget.dataset.completed === true || e.currentTarget.dataset.completed === 'true';
+    if (!instanceKey || !scheduleId || !occurrenceDate) return;
+    if (!this._todayTogglingKeys) this._todayTogglingKeys = new Set();
+    if (this._todayTogglingKeys.has(instanceKey)) return;
+    this._todayTogglingKeys.add(instanceKey);
+    this.updateTodayInstance(instanceKey, { toggling: true });
+    try {
+      const res = await wx.cloud.callFunction({
+        name: 'toggleSchedule',
+        data: { id: scheduleId, occurrenceDate, completed: !completed }
+      });
+      const result = res.result || {};
+      if (!result.success || !result.schedule) throw new Error(result.msg || '操作失败');
+      const item = this.data.todaySchedules.find((entry) => entry.instanceKey === instanceKey);
+      const nextCompleted = !!result.schedule.completed;
+      this.updateTodayInstance(instanceKey, {
+        completed: nextCompleted,
+        stateText: item && item.typeClass === 'checkin' ? (nextCompleted ? '已打卡' : '待打卡') : (nextCompleted ? '已完成' : '待完成'),
+        toggling: false
+      });
+    } catch (err) {
+      console.error('[index] toggle today schedule failed:', err);
+      this.updateTodayInstance(instanceKey, { toggling: false });
+      util.toast((err && err.message) || '操作失败，请重试');
+    } finally {
+      this._todayTogglingKeys.delete(instanceKey);
+    }
+  },
+
+  updateTodayInstance(instanceKey, patch) {
+    const todaySchedules = this.data.todaySchedules.map((item) => item.instanceKey === instanceKey ? Object.assign({}, item, patch) : item);
+    this.setData({ todaySchedules });
+  },
+
+  retryTodaySchedules() {
+    this.loadTodaySchedules();
+  },
+
+  retryPendingReports() {
+    this.loadPendingReports();
   },
 
   /** 去绑定 */

@@ -787,6 +787,56 @@ function assert(cond, msg) {
   assert(scheduleWxss.includes('.todo-completed .item-title') && !scheduleWxss.includes('.completed .item-title { color: #9AA0A6; text-decoration: line-through;'),
     'V2 完成样式：只有 todo 使用删除线，checkin 保留完成者展示');
 
+  // ---------- 首页聚合优化 ----------
+  console.log('\n== 首页聚合优化 ==');
+  const indexJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'index', 'index.js'), 'utf8');
+  const indexWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'index', 'index.wxml'), 'utf8');
+  const indexWxss = fs.readFileSync(path.join(__dirname, '..', 'pages', 'index', 'index.wxss'), 'utf8');
+  assert(indexWxml.includes('新建日程') && indexWxml.includes('bindtap="goScheduleCreate"') &&
+    indexJs.includes('/pages/schedule-edit/schedule-edit?date=${this.shanghaiToday()}'), '首页快速入口：新建日程携带上海今天日期');
+  assert(indexWxml.includes('发起报备') && indexJs.includes("url: '/pages/apply/apply'"), '首页快速入口：复用现有发起报备页');
+  assert(indexWxml.includes('记一笔') && indexJs.includes("url: '/pages/bill-edit/bill-edit'"), '首页快速入口：复用现有记一笔页');
+  assert(indexJs.includes("name: 'getSchedules'") && indexJs.includes('data: { date: this.shanghaiToday() }'), '首页今日安排：只调用 getSchedules({date})');
+  assert(!/name:\s*['"]getSchedules['"][\s\S]{0,160}data:\s*\{\s*year\s*,\s*month/.test(indexJs), '首页今日安排：不查询整月日程');
+  assert(indexJs.includes('list.slice(0, 5)') && indexWxml.includes('todayScheduleHasMore') && indexWxml.includes('查看全部 ›'),
+    '首页今日安排：最多渲染 5 条，超出后显示查看全部');
+  assert(indexWxml.includes('{{item.ownerLabel}}') && indexWxml.includes('{{item.typeText}}'), '首页今日安排：展示归属和事项类型');
+  assert(indexWxml.includes('bindtap="goScheduleDetail"') && indexJs.includes("'/pages/schedule-edit/schedule-edit?id=' + id"),
+    '首页今日安排：点击使用 scheduleId 进入编辑页');
+  assert(indexJs.includes("data: { role: 'approver', status: 'pending', pageSize: 3 }") &&
+    indexJs.includes("r.status === 'pending'") && indexJs.includes('.slice(0, 3)'), '首页待审批：服务端限定 approver/pending/3 条并保留客户端防御过滤');
+  assert(indexWxml.includes('bindtap="goDetail"') && indexJs.includes("'/pages/detail/detail?id=' + id"), '首页待审批：点击进入现有详情页');
+  assert(indexJs.includes('todayScheduleError: true') && indexJs.includes('pendingError: true') &&
+    indexWxml.includes('今日安排暂时加载失败') && indexWxml.includes('待审批暂时加载失败'), '首页模块失败：今日安排和待审批分别独立降级');
+  assert(indexJs.includes('Promise.allSettled') && indexJs.includes('this.loadTodaySchedules()') && indexJs.includes('this.loadPendingReports()'),
+    '首页性能：独立聚合请求并行加载');
+  assert(indexJs.includes('bannerKey !== this._bannerFileKey') && indexJs.includes('shouldRefreshBanner'), '首页性能：Banner fileID 未变化时复用临时 URL');
+  assert(indexJs.includes('now - (this._lastUserRefreshAt || 0) > 30000') && !indexJs.includes("name: 'getBillStats'"),
+    '首页性能：登录资料短缓存且移除首页月账单统计请求');
+  assert(indexWxml.includes('banner-swiper') && indexJs.includes('refreshBannerUrls') && indexWxml.includes('onManageBanners'),
+    '首页兼容：原 Banner 展示与管理功能保留');
+  assert(!indexWxml.includes('空间') && !indexJs.includes('/pages/space/'), '首页范围：未新增空间入口');
+  assert(!/vant|weui|miniprogram_npm/.test(indexJs + indexWxml) && indexWxss.includes('.quick-grid'),
+    '首页视觉：不引入第三方 UI，快速入口使用轻量三列布局');
+  assert(indexWxml.includes('catchtap="onTodayToggle"') && indexWxml.includes('data-occurrence-date="{{item.occurrenceDate}}"') &&
+    indexJs.includes("name: 'toggleSchedule'") && indexJs.includes('data: { id: scheduleId, occurrenceDate, completed: !completed }'),
+    '首页今日安排：三种事项均可携带 occurrenceDate 直接 toggle 且按钮阻止冒泡');
+  assert(indexJs.includes('updateTodayInstance(instanceKey') && indexJs.includes("this._todayTogglingKeys.has(instanceKey)") &&
+    !/onTodayToggle[\s\S]{0,1800}this\.init\(/.test(indexJs), '首页今日安排：按 instanceKey 局部更新、单项锁定且不触发完整 init');
+  assert(indexJs.includes("toggle today schedule failed") && indexJs.includes("util.toast((err && err.message) || '操作失败，请重试')"),
+    '首页今日安排：toggle 失败解除单项状态并明确提示');
+  assert(indexWxml.includes('today-schedule-icon') && indexWxml.includes('today-todo-icon') && indexWxml.includes('today-checkin-icon') &&
+    !/[□○✓]/.test(indexWxml), '首页今日安排：三种纯 WXSS 完成图形存在且不使用字符图标');
+  assert(indexWxml.includes('quick-icon-bubble') && indexWxml.includes('calendar-heart') && indexWxml.includes('clipboard-clip') &&
+    indexWxml.includes('paper-plane') && indexWxml.includes('wallet-icon') && indexWxml.includes('wallet-coin') && indexWxss.includes('.cute-spark'),
+    '首页快速入口：爱心日历、剪贴板纸飞机、钱包硬币均使用统一多层卡通 WXSS 图标');
+  assert(!/https?:\/\//.test(indexWxml) && !indexWxml.includes('<image class="quick'), '首页快速入口：未增加网络图片或位图资源');
+  assert(/\.today-toggle\s*\{[^}]*width:\s*72rpx;[^}]*height:\s*72rpx;/s.test(indexWxss) &&
+    /\.today-schedule-icon\s*\{[^}]*width:\s*52rpx;[^}]*height:\s*46rpx;/s.test(indexWxss) &&
+    /\.today-todo-icon\s*\{[^}]*width:\s*46rpx;[^}]*height:\s*46rpx;/s.test(indexWxss) &&
+    /\.today-checkin-icon\s*\{[^}]*width:\s*48rpx;[^}]*height:\s*48rpx;/s.test(indexWxss),
+    '首页今日安排：三种完成图标放大至 46～52rpx，点击区域统一为 72rpx');
+
   // ---------- Banner 原子同步与受控访问 ----------
   console.log('\n== Banner 原子同步与受控访问 ==');
   const banner1 = 'cloud://test-env/banners/a-1.jpg';
