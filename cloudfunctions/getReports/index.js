@@ -6,6 +6,19 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 const _ = db.command;
 
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录', list: [], hasMore: false } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣', list: [], hasMore: false } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常', list: [], hasMore: false } };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, pairKey: memberIds.join('|') };
+}
+
 exports.main = async (event, context) => {
   const { OPENID } = cloud.getWXContext();
   const role = String(event.role || '');        // '' | creator | approver
@@ -14,36 +27,29 @@ exports.main = async (event, context) => {
   const pageSize = Math.min(50, Math.max(1, parseInt(event.pageSize || event.limit, 10) || 20));
 
   try {
-    const users = db.collection('users');
-    const meRes = await users.where({ openid: OPENID }).get();
-    if (meRes.data.length === 0) {
-      console.error('[getReports] 用户不存在');
-      return { success: false, msg: '请先登录', list: [], hasMore: false };
-    }
-    const me = meRes.data[0];
+    const auth = await getCurrentPair(OPENID);
+    if (auth.error) return auth.error;
+    const me = auth.me;
 
     // 根据 role 严格构建查询条件（数据隔离核心）
+    const statusFilter = status && ['pending', 'approved', 'rejected'].includes(status) ? { status } : {};
     let where;
     if (role === 'creator') {
       // 「我发起的」：仅查询当前用户作为发起人创建的报备
-      where = { openid: OPENID };
+      where = Object.assign({ pairKey: auth.pairKey, creatorId: me._id }, statusFilter);
     } else if (role === 'approver') {
       // 「我审批的」：仅查询当前用户作为审批人（partnerId 指向 me._id）的报备
-      where = { partnerId: me._id };
+      where = Object.assign({ pairKey: auth.pairKey, partnerId: me._id }, statusFilter);
     } else {
       // 未指定角色时，返回与当前用户相关的所有报备
       where = _.or([
-        { openid: OPENID },
-        { partnerId: me._id }
+        Object.assign({ pairKey: auth.pairKey, creatorId: me._id }, statusFilter),
+        Object.assign({ pairKey: auth.pairKey, partnerId: me._id }, statusFilter)
       ]);
     }
 
     // 组装查询
-    let query = db.collection('reports').where(where);
-    if (status && ['pending', 'approved', 'rejected'].includes(status)) {
-      query = query.where({ status });
-    }
-    const res = await query
+    const res = await db.collection('reports').where(where)
       .orderBy('createdAt', 'desc')
       .skip(page * pageSize)
       .limit(pageSize)

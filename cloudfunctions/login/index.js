@@ -35,11 +35,6 @@ exports.main = async (event, context) => {
         updateData.bindCode = bindCode;
         user.bindCode = bindCode;
       }
-      // 为老用户补充缺失的 banners 字段
-      if (!Array.isArray(user.banners)) {
-        updateData.banners = [];
-        user.banners = [];
-      }
       await users.doc(user._id).update({ data: updateData });
       return { success: true, openid: OPENID, userInfo: user };
     }
@@ -60,7 +55,6 @@ exports.main = async (event, context) => {
       partnerId: '',        // 伴侣的用户文档 _id，空=未绑定
       partnerName: '',
       bindTime: null,
-      banners: [],
       createdAt: db.serverDate(),
       lastLoginAt: db.serverDate()
     };

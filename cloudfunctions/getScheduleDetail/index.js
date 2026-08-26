@@ -4,7 +4,11 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
 function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || record.pairKey === pair.pairKey; }
+function pairAccessError(record, pair) {
+  if (!record.pairKey) return { success: false, code: 'DATA_ISOLATION_ERROR', msg: '事项缺少数据隔离标识' };
+  if (record.pairKey !== pair.pairKey) return { success: false, code: 'ACCESS_DENIED', msg: '无权访问此事项' };
+  return null;
+}
 async function getCurrentPair(openid) {
   const users = db.collection('users');
   const res = await users.where({ openid }).get();
@@ -38,7 +42,9 @@ exports.main = async (event = {}) => {
     if (!id) return { success: false, code: 'INVALID_ID', msg: '事项参数不正确' };
     const res = await db.collection('schedules').doc(id).get().catch(() => null);
     const schedule = res && res.data;
-    if (!schedule || !auth.userIds.includes(schedule.creatorId) || !assertPairRecordAccess(schedule, auth)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
+    if (!schedule) return { success: false, code: 'NOT_FOUND', msg: '事项不存在' };
+    const accessError = pairAccessError(schedule, auth);
+    if (accessError) return accessError;
     return { success: true, schedule: normalize(schedule, auth.me) };
   } catch (err) {
     console.error('[getScheduleDetail] failed:', err && (err.errMsg || err.message || err));

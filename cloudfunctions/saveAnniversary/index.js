@@ -51,17 +51,11 @@ exports.main = async (event = {}) => {
       const existingRes = await ref.get().catch(() => null);
       const existing = existingRes && existingRes.data;
       const now = db.serverDate();
-      const record = {
-        pairKey: pair.pairKey,
-        memberIds: pair.memberIds,
-        anniversaryDate,
-        createdAt: existing && existing.createdAt ? existing.createdAt : now,
-        updatedAt: now,
-        updatedBy: me._id
-      };
-      if (existing) await ref.update({ data: record });
-      else await ref.set({ data: record });
-      committed = Object.assign({ _id: pair.documentId }, record);
+      if (existing && existing.pairKey !== pair.pairKey) throw new BusinessError('情侣设置数据异常', 'SETTINGS_CONFLICT');
+      const patch = { anniversaryDate, updatedAt: now, updatedBy: me._id };
+      if (existing) await ref.update({ data: patch });
+      else await ref.set({ data: Object.assign({ pairKey: pair.pairKey, memberIds: pair.memberIds, createdAt: now }, patch) });
+      committed = Object.assign({ _id: pair.documentId }, existing || {}, patch);
     });
     return { success: true, settings: { anniversaryDate: committed.anniversaryDate, updatedAt: committed.updatedAt } };
   } catch (err) {

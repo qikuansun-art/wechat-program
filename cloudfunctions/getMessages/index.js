@@ -10,21 +10,30 @@ const _ = db.command;
 
 const PAGE_SIZE = 50;
 
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录', list: [] } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣', list: [] } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常', list: [] } };
+  return { me, partner, pairKey: [me._id, partner._id].sort().join('|') };
+}
+
 exports.main = async (event, context) => {
   const { OPENID } = cloud.getWXContext();
 
   try {
-    const users = db.collection('users');
-    const meRes = await users.where({ openid: OPENID }).get();
-    if (meRes.data.length === 0) {
-      return { success: false, msg: '请先登录', list: [] };
-    }
-    const me = meRes.data[0];
+    const auth = await getCurrentPair(OPENID);
+    if (auth.error) return auth.error;
+    const me = auth.me;
     const reports = db.collection('reports');
 
     // 1. 待我审批：我是审批人 且 状态为 pending
     const todoRes = await reports
-      .where({ partnerId: me._id, status: 'pending' })
+      .where({ pairKey: auth.pairKey, partnerId: me._id, status: 'pending' })
       .orderBy('createdAt', 'desc')
       .limit(PAGE_SIZE)
       .get();
@@ -32,7 +41,8 @@ exports.main = async (event, context) => {
     // 2. 我的结果：我是发起人 且 已处理（approved/rejected）
     const resultRes = await reports
       .where({
-        openid: OPENID,
+        pairKey: auth.pairKey,
+        creatorId: me._id,
         status: _.in(['approved', 'rejected'])
       })
       .orderBy('processedAt', 'desc')

@@ -61,7 +61,11 @@ function validateInput(event, auth) {
 }
 
 function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || record.pairKey === pair.pairKey; }
+function pairAccessError(record, pair) {
+  if (!record.pairKey) return { success: false, code: 'DATA_ISOLATION_ERROR', msg: '事项缺少数据隔离标识' };
+  if (record.pairKey !== pair.pairKey) return { success: false, code: 'ACCESS_DENIED', msg: '无权编辑此事项' };
+  return null;
+}
 async function getCurrentPair(openid) {
   const users = db.collection('users');
   const res = await users.where({ openid }).get();
@@ -96,7 +100,9 @@ exports.main = async (event = {}) => {
     }
     const existingRes = await schedules.doc(id).get().catch(() => null);
     const existing = existingRes && existingRes.data;
-    if (!existing || !auth.userIds.includes(existing.creatorId) || !assertPairRecordAccess(existing, auth)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
+    if (!existing) return { success: false, code: 'NOT_FOUND', msg: '事项不存在' };
+    const accessError = pairAccessError(existing, auth);
+    if (accessError) return accessError;
     const previousRepeatType = existing.repeatType || 'none';
     const update = Object.assign({}, checked.value, { updatedAt: now, updatedBy: auth.me._id });
     if (previousRepeatType !== checked.value.repeatType || (checked.value.type === 'schedule' && existing.type !== 'schedule')) {

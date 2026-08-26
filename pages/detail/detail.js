@@ -71,19 +71,12 @@ Page({
     return formatted;
   },
 
-  /** 预览图片（转临时链接） */
-  async onPreviewImage(e) {
+  /** 预览服务端鉴权后签发的图片临时地址 */
+  onPreviewImage(e) {
     const idx = e.currentTarget.dataset.idx;
-    const fileIDs = this.data.report.images || [];
-    if (!fileIDs.length) return;
-    try {
-      const res = await wx.cloud.getTempFileURL({ fileList: fileIDs });
-      const urls = (res.fileList || []).map((f) => f.tempFileURL);
-      wx.previewImage({ current: urls[idx], urls });
-    } catch (err) {
-      console.error('预览图片失败', err);
-      util.toast('图片预览失败');
-    }
+    const urls = this.data.report.imageUrls || [];
+    if (!urls.length || !urls[idx]) return;
+    wx.previewImage({ current: urls[idx], urls });
   },
 
   /** 批准 */

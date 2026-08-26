@@ -24,7 +24,8 @@ async function getBoundUsers(openid) {
   if (!partner || me.partnerId !== partner._id || partner.partnerId !== me._id) {
     return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
   }
-  return { me, partner };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: memberIds.join('|') };
 }
 
 exports.main = async (event = {}) => {
@@ -42,9 +43,10 @@ exports.main = async (event = {}) => {
   try {
     const auth = await getBoundUsers(OPENID);
     if (auth.error) return auth.error;
-    const creatorIds = person === 'mine' ? [auth.me._id] : person === 'partner' ? [auth.partner._id] : [auth.me._id, auth.partner._id];
     const range = monthRange(yearMonth);
-    const where = { creatorId: _.in(creatorIds), billDate: _.gte(range.start).and(_.lt(range.end)) };
+    const where = { pairKey: auth.pairKey, billDate: _.gte(range.start).and(_.lt(range.end)) };
+    if (person === 'mine') where.creatorId = auth.me._id;
+    if (person === 'partner') where.creatorId = auth.partner._id;
     if (type !== 'all') where.type = type;
     if (category) where.category = category;
     const res = await db.collection('bills').where(where)

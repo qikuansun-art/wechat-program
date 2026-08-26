@@ -17,7 +17,11 @@ async function getCurrentPair(openid) {
   const memberIds = [me._id, partner._id].sort();
   return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
 }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || (!!pair && !pair.error && record.pairKey === pair.pairKey); }
+function pairAccessError(record, pair) {
+  if (!record.pairKey) return { success: false, code: 'DATA_ISOLATION_ERROR', msg: '账单缺少数据隔离标识' };
+  if (record.pairKey !== pair.pairKey) return { success: false, code: 'ACCESS_DENIED', msg: '无权修改此账单' };
+  return null;
+}
 
 // 允许的记账分类（与 addBill 保持一致）
 const CATEGORIES = {
@@ -77,8 +81,10 @@ exports.main = async (event, context) => {
       return { success: false, msg: '账单不存在' };
     }
     const bill = billRes.data;
-    const pair = bill.pairKey ? await getCurrentPair(OPENID) : null;
-    if (!assertPairRecordAccess(bill, pair)) return { success: false, msg: '无权修改此账单' };
+    const pair = await getCurrentPair(OPENID);
+    if (pair.error) return { success: false, code: 'ACCESS_DENIED', msg: '当前情侣关系无效' };
+    const accessError = pairAccessError(bill, pair);
+    if (accessError) return accessError;
     if (bill.creatorId !== me._id) {
       return { success: false, msg: '只能修改自己记的账哦' };
     }

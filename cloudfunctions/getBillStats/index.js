@@ -127,7 +127,8 @@ exports.main = async (event = {}) => {
     if (auth.error) return auth.error;
     const range = monthRange(yearMonth);
     const memberIds = [auth.me._id, auth.partner._id];
-    const matchCondition = { creatorId: _.in(memberIds), billDate: _.gte(range.start).and(_.lt(range.end)) };
+    const pair = pairInfo(auth.me, auth.partner);
+    const matchCondition = { pairKey: pair.pairKey, billDate: _.gte(range.start).and(_.lt(range.end)) };
     const aggregateRes = await db.collection('bills').aggregate()
       .match(matchCondition)
       .group({
@@ -160,7 +161,6 @@ exports.main = async (event = {}) => {
     );
     const filteredStats = buildStats(yearMonth, filteredGroups, filteredCreatorIds, usersById);
     delete filteredStats.categoryExpense;
-    const pair = pairInfo(auth.me, auth.partner);
     const budgetRes = await db.collection('bill_budgets').doc(budgetId(pair.pairKey, yearMonth)).get().catch(() => null);
     const record = budgetRes && budgetRes.data && budgetRes.data.pairKey === pair.pairKey && budgetRes.data.month === yearMonth ? budgetRes.data : null;
     return {

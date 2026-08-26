@@ -1,36 +1,35 @@
-// 云函数：getSharedBanners —— 返回当前用户共享 Banner 的受控临时访问地址
+const crypto = require('crypto');
 const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
-function sameOrderedList(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
+function pairInfo(me, partner) {
+  const memberIds = [me._id, partner._id].sort();
+  const pairKey = memberIds.join('|');
+  return { pairKey, documentId: crypto.createHash('sha256').update(pairKey).digest('hex') };
+}
+
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录', items: [] } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣', items: [] } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定', items: [] } };
+  return Object.assign({ me, partner }, pairInfo(me, partner));
 }
 
 exports.main = async () => {
   const { OPENID } = cloud.getWXContext();
   try {
-    const meRes = await db.collection('users').where({ openid: OPENID }).get();
-    if (meRes.data.length !== 1) return { success: false, msg: '请先登录', items: [] };
-    const me = meRes.data[0];
-    const banners = Array.isArray(me.banners) ? me.banners : [];
-
-    if (me.partnerId) {
-      let partner;
-      try {
-        partner = (await db.collection('users').doc(me.partnerId).get()).data;
-      } catch (err) {
-        return { success: false, msg: '伴侣资料异常，请检查绑定关系', code: 'PARTNER_NOT_FOUND', items: [] };
-      }
-      if (!partner || partner.partnerId !== me._id) {
-        return { success: false, msg: '双方绑定关系不一致', code: 'PARTNER_MISMATCH', items: [] };
-      }
-      const partnerBanners = Array.isArray(partner.banners) ? partner.banners : [];
-      if (!sameOrderedList(banners, partnerBanners)) {
-        return { success: false, msg: '双方历史 Banner 数据不一致，请人工确认后修复', code: 'BANNER_HISTORY_CONFLICT', items: [] };
-      }
-    }
-
+    const pair = await getCurrentPair(OPENID);
+    if (pair.error) return pair.error;
+    const settingsRes = await db.collection('couple_settings').doc(pair.documentId).get().catch(() => null);
+    const settings = settingsRes && settingsRes.data;
+    if (settings && settings.pairKey !== pair.pairKey) return { success: false, code: 'SETTINGS_CONFLICT', msg: '情侣设置数据异常', items: [] };
+    const banners = settings && Array.isArray(settings.banners) ? settings.banners.slice() : [];
     if (banners.length === 0) return { success: true, banners: [], items: [] };
     let tempResult;
     try {
@@ -39,7 +38,6 @@ exports.main = async () => {
       console.error('[getSharedBanners] temporary URL request failed:', err && (err.errMsg || err.message || err));
       return { success: true, banners, items: banners.map((fileID) => ({ fileID, tempURL: '', success: false, errMsg: '临时链接获取失败' })) };
     }
-
     const files = Array.isArray(tempResult.fileList) ? tempResult.fileList : [];
     const byFileID = new Map(files.map((file) => [file.fileID, file]));
     const items = banners.map((fileID, index) => {
@@ -50,6 +48,6 @@ exports.main = async () => {
     return { success: true, banners, items };
   } catch (err) {
     console.error('[getSharedBanners] failed:', err && (err.errMsg || err.message || err));
-    return { success: false, msg: 'Banner 加载失败，请稍后重试', items: [] };
+    return { success: false, code: 'QUERY_FAILED', msg: 'Banner 加载失败，请稍后重试', items: [] };
   }
 };

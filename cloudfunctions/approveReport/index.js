@@ -18,16 +18,16 @@ async function getCurrentPair(openid) {
   const memberIds = [me._id, partner._id].sort();
   return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
 }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || (!!pair && !pair.error && record.pairKey === pair.pairKey); }
 
 const TEMPLATE_APPROVE_RESULT = 'nrteb3ujtZBTIHtyABGP0FGP3Dy19PxRelc0IFFnaB8';
 const NOTIFY_PAGE = 'pages/record/record';
 const MINIPROGRAM_STATE = 'formal';
 
 class BusinessError extends Error {
-  constructor(message) {
+  constructor(message, code = 'ALREADY_PROCESSED') {
     super(message);
     this.name = 'BusinessError';
+    this.code = code;
   }
 }
 
@@ -137,12 +137,11 @@ exports.main = async (event, context) => {
       }
       const report = reportRes.data;
 
-      if (report.pairKey) {
-        if (!assertPairRecordAccess(report, currentPair)) throw new BusinessError('无权操作此报备');
-      }
+      if (!report.pairKey) throw new BusinessError('报备缺少数据隔离标识', 'DATA_ISOLATION_ERROR');
+      if (!currentPair || currentPair.error || report.pairKey !== currentPair.pairKey) throw new BusinessError('无权操作此报备', 'ACCESS_DENIED');
 
       if (report.partnerId !== me._id) {
-        throw new BusinessError('无权操作此报备');
+        throw new BusinessError('无权操作此报备', 'ACCESS_DENIED');
       }
       if (report.status !== 'pending') {
         throw new BusinessError('该报备已被处理，请刷新后查看最新结果');
@@ -163,7 +162,7 @@ exports.main = async (event, context) => {
     console.log('[ApproveReport][TRANSACTION_SUCCESS]', { reportId: reportId.slice(-8), status: action === 'approve' ? 'approved' : 'rejected' });
   } catch (err) {
     if (err && err.name === 'BusinessError') {
-      return { success: false, code: 'ALREADY_PROCESSED', msg: err.message };
+      return { success: false, code: err.code || 'ALREADY_PROCESSED', msg: err.message };
     }
     console.error('[ApproveReport][FUNCTION_ERROR]', { stage: 'transaction', message: err && (err.errMsg || err.message) || '未知错误' });
     return { success: false, code: 'TRANSACTION_FAILED', msg: '操作失败，请重试' };

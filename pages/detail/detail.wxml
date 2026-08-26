@@ -49,10 +49,10 @@
       <text class="detail-value">{{report.createdAtText}}</text>
     </view>
 
-    <view class="detail-images" wx:if="{{report.images.length > 0}}">
+    <view class="detail-images" wx:if="{{report.imageUrls.length > 0}}">
       <view class="detail-label">图片凭证</view>
       <view class="image-list">
-        <image class="detail-image" wx:for="{{report.images}}" wx:key="*this" src="{{item}}"
+        <image class="detail-image" wx:for="{{report.imageUrls}}" wx:key="*this" src="{{item}}"
           mode="aspectFill" bindtap="onPreviewImage" data-idx="{{index}}" />
       </view>
     </view>

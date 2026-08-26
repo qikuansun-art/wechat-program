@@ -68,7 +68,9 @@ async function getBoundUser(openid) {
   if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣' } };
   const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
   if (!partnerRes || !partnerRes.data || partnerRes.data.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
-  return { me, userIds: [me._id, me.partnerId] };
+  const partner = partnerRes.data;
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: memberIds.join('|') };
 }
 function getRange(event) {
   const requestedDate = typeof event.date === 'string' ? event.date.trim() : '';
@@ -87,9 +89,9 @@ exports.main = async (event = {}) => {
     const range = getRange(event);
     if (!range) return { success: false, code: 'INVALID_RANGE', msg: '查询日期参数不正确' };
     const schedules = db.collection('schedules');
-    const normalPromise = schedules.where({ creatorId: _.in(auth.userIds), date: _.gte(range.startDate).and(_.lte(range.endDate)) }).limit(MAX_RULES + 1).get();
+    const normalPromise = schedules.where({ pairKey: auth.pairKey, date: _.gte(range.startDate).and(_.lte(range.endDate)) }).limit(MAX_RULES + 1).get();
     const recurringPromises = RECURRING_TYPES.map((repeatType) => schedules.where({
-      creatorId: _.in(auth.userIds), repeatType,
+      pairKey: auth.pairKey, repeatType,
       repeatStartDate: _.lte(range.endDate),
       repeatEndDate: _.gte(range.startDate)
     }).limit(MAX_RULES + 1).get());
@@ -114,7 +116,7 @@ exports.main = async (event = {}) => {
     if (completionTargets.length) {
       const ids = Array.from(new Set(completionTargets.map((item) => item.scheduleId)));
       const completionRes = await db.collection('schedule_completions').where({
-        scheduleId: _.in(ids), occurrenceDate: _.gte(range.startDate).and(_.lte(range.endDate))
+        pairKey: auth.pairKey, scheduleId: _.in(ids), occurrenceDate: _.gte(range.startDate).and(_.lte(range.endDate))
       }).get();
       const completionMap = new Map(completionRes.data.map((item) => [`${item.scheduleId}:${item.occurrenceDate}`, item]));
       completionTargets.forEach((item) => {

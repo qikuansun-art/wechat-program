@@ -17,7 +17,11 @@ async function getCurrentPair(openid) {
   const memberIds = [me._id, partner._id].sort();
   return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
 }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || (!!pair && !pair.error && record.pairKey === pair.pairKey); }
+function pairAccessError(record, pair) {
+  if (!record.pairKey) return { success: false, code: 'DATA_ISOLATION_ERROR', msg: '报备缺少数据隔离标识' };
+  if (record.pairKey !== pair.pairKey) return { success: false, code: 'ACCESS_DENIED', msg: '无权查看此报备' };
+  return null;
+}
 
 exports.main = async (event, context) => {
   const { OPENID } = cloud.getWXContext();
@@ -37,8 +41,10 @@ exports.main = async (event, context) => {
       return { success: false, msg: '报备不存在' };
     }
     const report = reportRes.data;
-    const pair = report.pairKey ? await getCurrentPair(OPENID) : null;
-    if (!assertPairRecordAccess(report, pair)) return { success: false, msg: '无权查看此报备' };
+    const pair = await getCurrentPair(OPENID);
+    if (pair.error) return { success: false, code: 'ACCESS_DENIED', msg: '当前情侣关系无效' };
+    const accessError = pairAccessError(report, pair);
+    if (accessError) return accessError;
 
     // 权限：我发起的 或 我审批的
     let myRole = '';
@@ -51,7 +57,25 @@ exports.main = async (event, context) => {
       return { success: false, msg: '无权查看此报备' };
     }
 
-    return { success: true, report, myRole };
+    const images = Array.isArray(report.images) ? report.images.slice() : [];
+    let imageUrls = [];
+    let imageLoadFailed = false;
+    if (images.length > 0) {
+      try {
+        const tempResult = await cloud.getTempFileURL({ fileList: images });
+        const files = Array.isArray(tempResult.fileList) ? tempResult.fileList : [];
+        imageUrls = files
+          .filter((file) => file && file.status === 0 && file.tempFileURL)
+          .map((file) => file.tempFileURL);
+        imageLoadFailed = imageUrls.length !== images.length;
+      } catch (imageErr) {
+        imageLoadFailed = true;
+        console.error('[getReportDetail][IMAGE_URL_FAILED]', imageErr && (imageErr.errMsg || imageErr.message || imageErr));
+      }
+    }
+    const reportForClient = Object.assign({}, report, { imageUrls, imageLoadFailed });
+    delete reportForClient.images;
+    return { success: true, report: reportForClient, myRole };
   } catch (err) {
     console.error('[getReportDetail] 失败', err);
     return { success: false, msg: '加载失败，请重试' };

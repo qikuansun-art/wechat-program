@@ -12,6 +12,7 @@ const store = { users: [], reports: [], bills: [], bill_budgets: [], couple_sett
 let autoId = 0;
 const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
+let currentContextEnv = 'test-env';
 let transactionTail = Promise.resolve();
 let transactionFailAfterWrites = null;
 let transactionReturnDirect = false;
@@ -48,6 +49,7 @@ function deepEqual(a, b) {
 
 // where 条件匹配（支持 _.in 和 db.RegExp）
 function match(doc, query) {
+  if (query && Array.isArray(query.__or)) return query.__or.some((condition) => match(doc, condition));
   return Object.keys(query).every((key) => {
     const cond = query[key];
     if (cond && cond.__in) return cond.__in.indexOf(doc[key]) >= 0;
@@ -184,16 +186,19 @@ const cloudFunctionCalls = [];
 const notifyCalls = [];
 let notifyError = null;
 let tempFileFailures = new Set();
+let tempFileURLThrow = null;
+const tempFileURLCalls = [];
 
 const mockCloud = {
   DYNAMIC_CURRENT_ENV: Symbol('env'),
   init() {},
-  getWXContext() { return { OPENID: currentOpenid }; },
+  getWXContext() { return { OPENID: currentOpenid, ENV: currentContextEnv }; },
   database() {
     const database = {
       collection: makeCollection,
       serverDate() { return new Date('2026-08-19T10:00:00+08:00'); },
       command: {
+        or(conditions) { return { __or: conditions }; },
         in(arr) { return { __in: arr }; },
         gte(value) {
           return {
@@ -251,11 +256,15 @@ const mockCloud = {
     cloudFunctionCalls.push({ name, data });
     return { result: { success: true } };
   },
-  getTempFileURL: async ({ fileList }) => ({
-    fileList: fileList.map((fileID) => tempFileFailures.has(fileID)
-      ? { fileID, status: -1, errMsg: 'mock file unavailable' }
-      : { fileID, status: 0, tempFileURL: 'https://temp.example/' + encodeURIComponent(fileID) })
-  }),
+  getTempFileURL: async ({ fileList }) => {
+    tempFileURLCalls.push(fileList.slice());
+    if (tempFileURLThrow) throw tempFileURLThrow;
+    return {
+      fileList: fileList.map((fileID) => tempFileFailures.has(fileID)
+        ? { fileID, status: -1, errMsg: 'mock file unavailable' }
+        : { fileID, status: 0, tempFileURL: 'https://temp.example/' + encodeURIComponent(fileID) })
+    };
+  },
   openapi: {
     subscribeMessage: {
       send: async (options) => {
@@ -303,7 +312,7 @@ function assert(cond, msg) {
   console.log('\n== 登录 ==');
   const loginA1 = await callAs(A, 'login');
   assert(loginA1.success && loginA1.userInfo.bindCode, 'A 首次登录：注册成功并生成邀请码');
-  assert(Array.isArray(loginA1.userInfo.banners), '新用户首次创建：初始化 banners 空数组');
+  assert(!Object.prototype.hasOwnProperty.call(loginA1.userInfo, 'banners'), '新用户首次创建：不再初始化个人 banners 字段');
   const loginA2 = await callAs(A, 'login');
   assert(loginA2.userInfo._id === loginA1.userInfo._id, 'A 二次登录：不会重复注册');
   const loginB = await callAs(B, 'login');
@@ -447,8 +456,80 @@ function assert(cond, msg) {
   assert(reportRes.success, 'A 发起报备：成功');
   const report = store.reports.find((r) => r._id === reportRes.id);
   assert(report && report.status === 'pending' && report.partnerId === usersB._id, '报备落库：待审批 + 审批人指向 B');
-  const newReportNotify = notifyCalls[notifyCalls.length - 1];
-  assert(notifyCalls.length === sendsBeforeReport + 1, 'subscriptions.count=0：真实报备仍尝试调用微信 API');
+  const ownReportImages = [1, 2, 3, 4].map((index) => `cloud://test-env/report-images/${A}/image-${index}.jpg`);
+  const imageReportRes = await callAs(A, 'createReport', {
+    location: '图片测试', returnTime: '22:00', reason: '图片凭证', images: ownReportImages
+  });
+  const imageReport = store.reports.find((item) => item._id === imageReportRes.id);
+  assert(imageReportRes.success && deepEqual(imageReport.images, ownReportImages.slice(0, 3)),
+    '报备图片：本人路径合法，超过3张沿用现有规则只保存前3张');
+  const originalTcbEnv = process.env.TCB_ENV;
+  delete process.env.TCB_ENV;
+  currentContextEnv = undefined;
+  const missingContextEnvReport = await callAs(A, 'createReport', {
+    location: '环境兼容', returnTime: '22:00', reason: '上下文环境缺失', images: [ownReportImages[0]]
+  });
+  currentContextEnv = 'cloud://test-env/';
+  const formattedContextEnvReport = await callAs(A, 'createReport', {
+    location: '环境兼容', returnTime: '22:00', reason: '上下文环境格式不同', images: [ownReportImages[1]]
+  });
+  const flexibleEnvFileID = `cloud://test-env-2026/report-images/${A}/nested/real-upload.jpg`;
+  const flexibleEnvReport = await callAs(A, 'createReport', {
+    location: '格式兼容', returnTime: '22:00', reason: '多层对象路径', images: [flexibleEnvFileID]
+  });
+  currentContextEnv = 'test-env';
+  process.env.TCB_ENV = 'cloud://test-env/';
+  assert(missingContextEnvReport.success && formattedContextEnvReport.success && flexibleEnvReport.success &&
+    store.reports.find((item) => item._id === flexibleEnvReport.id).images[0] === flexibleEnvFileID,
+    '报备图片格式：context ENV 缺失/格式不同不误拒绝，环境含横杠数字和多层路径可解析');
+  const ownerAttackC = await callAs(A, 'createReport', {
+    location: '攻击测试', returnTime: '22:00', reason: '伪造C图片', images: [`cloud://test-env/report-images/${C}/c.jpg`]
+  });
+  const ownerAttackD = await callAs(A, 'createReport', {
+    location: '攻击测试', returnTime: '22:00', reason: '伪造D图片', images: [`cloud://test-env/report-images/${D}/d.jpg`]
+  });
+  const environmentAttack = await callAs(A, 'createReport', {
+    location: '攻击测试', returnTime: '22:00', reason: '跨环境图片', images: [`cloud://other-env/report-images/${A}/x.jpg`]
+  });
+  if (originalTcbEnv === undefined) delete process.env.TCB_ENV;
+  else process.env.TCB_ENV = originalTcbEnv;
+  const invalidImage = await callAs(A, 'createReport', {
+    location: '攻击测试', returnTime: '22:00', reason: '非法图片', images: ['not-a-cloud-file-id']
+  });
+  const missingFileEnv = await callAs(A, 'createReport', {
+    location: '攻击测试', returnTime: '22:00', reason: '缺少环境段', images: [`cloud:///report-images/${A}/x.jpg`]
+  });
+  const missingObjectPath = await callAs(A, 'createReport', {
+    location: '攻击测试', returnTime: '22:00', reason: '缺少对象路径', images: ['cloud://test-env']
+  });
+  assert([ownerAttackC, ownerAttackD].every((item) => !item.success && item.code === 'FILE_OWNER_MISMATCH') &&
+    !environmentAttack.success && environmentAttack.code === 'FILE_ENV_MISMATCH' &&
+    [invalidImage, missingFileEnv, missingObjectPath].every((item) => !item.success && item.code === 'INVALID_FILE_ID'),
+    '报备图片攻击：拒绝C/D路径、跨环境、缺协议、缺环境段和缺对象路径');
+
+  const signedImageDetail = await callAs(B, 'getReportDetail', { reportId: imageReportRes.id });
+  assert(signedImageDetail.success && signedImageDetail.report.imageUrls.length === 3 &&
+    !signedImageDetail.report.imageLoadFailed && !Object.prototype.hasOwnProperty.call(signedImageDetail.report, 'images'),
+    '报备详情：服务端在 pairKey 鉴权后签发临时URL，且不向页面暴露原始 fileID');
+  tempFileURLThrow = new Error('mock temp URL service unavailable');
+  const imageFailureDetail = await callAs(A, 'getReportDetail', { reportId: imageReportRes.id });
+  tempFileURLThrow = null;
+  assert(imageFailureDetail.success && deepEqual(imageFailureDetail.report.imageUrls, []) && imageFailureDetail.report.imageLoadFailed,
+    '报备详情：图片临时URL签发失败时详情仍成功并降级为空图片列表');
+
+  const historicalImage = 'cloud://test-env/legacy/report-old-path.jpg';
+  const historicalImageReport = {
+    _id: 'historical-image-report', openid: A, creatorId: usersA._id, creatorName: '历史用户',
+    partnerId: usersB._id, pairKey: expectedPairKey, memberIds: [usersA._id, usersB._id].sort(),
+    location: '历史地点', returnTime: '20:00', reason: '历史图片', images: [historicalImage], status: 'approved'
+  };
+  store.reports.push(historicalImageReport);
+  const historicalImageDetail = await callAs(B, 'getReportDetail', { reportId: historicalImageReport._id });
+  assert(historicalImageDetail.success && historicalImageDetail.report.imageUrls.length === 1 &&
+    historicalImageDetail.report.imageUrls[0].includes(encodeURIComponent(historicalImage)),
+    '报备历史图片：不按新上传路径反向校验，已鉴权旧 report 仍可签发URL');
+  const newReportNotify = notifyCalls[sendsBeforeReport];
+  assert(notifyCalls.length === sendsBeforeReport + 5, 'subscriptions.count=0：真实报备仍尝试调用微信 API');
   assert(newReportNotify.touser === B && newReportNotify.templateId === TEMPLATE_NEW_REPORT &&
     newReportNotify.page === 'pages/message/message', '新报备：接收人、模板和页面由真实伴侣关系固定生成');
   assert(newReportNotify.data.thing2.value === '真实昵称A要去万达影城' &&
@@ -545,6 +626,9 @@ function assert(cond, msg) {
   const approveCloudSource = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'approveReport', 'index.js'), 'utf8');
   const detailJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'detail', 'detail.js'), 'utf8');
   const detailWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'detail', 'detail.wxml'), 'utf8');
+  assert(!detailJs.includes('wx.cloud.getTempFileURL') && detailJs.includes('this.data.report.imageUrls') &&
+    detailWxml.includes('report.imageUrls'),
+    '报备图片前端：完全移除客户端临时URL转换，只使用服务端签发的 imageUrls');
   assert(approveCloudSource.includes('let committedReport = null') &&
     !approveCloudSource.includes('txRes.result') &&
     approveCloudSource.indexOf('[ApproveReport][TRANSACTION_SUCCESS]') < approveCloudSource.indexOf('await notifyCreator') &&
@@ -622,7 +706,9 @@ function assert(cond, msg) {
     _id: nextId(), creatorId: scheduleUserI()._id, creatorName: 'I', type: 'todo', title: '另一对的事项',
     date: '2026-08-24', startTime: '10:00', endTime: '', note: '', completed: false,
     completedBy: '', completedByName: '', completedAt: null, createdAt: new Date('2026-08-20T00:00:00Z'),
-    updatedAt: new Date('2026-08-20T00:00:00Z'), updatedBy: scheduleUserI()._id
+    updatedAt: new Date('2026-08-20T00:00:00Z'), updatedBy: scheduleUserI()._id,
+    pairKey: [scheduleUserI()._id, scheduleUserI().partnerId].sort().join('|'),
+    memberIds: [scheduleUserI()._id, scheduleUserI().partnerId].sort()
   };
   store.schedules.push(foreignSchedule);
 
@@ -638,7 +724,7 @@ function assert(cond, msg) {
   const ownDetail = await callAs(B, 'getScheduleDetail', { id: scheduleCreated.id });
   const foreignDetail = await callAs(A, 'getScheduleDetail', { id: foreignSchedule._id });
   assert(ownDetail.success && ownDetail.schedule._id === scheduleCreated.id, '日程详情：伴侣可查看对方创建的事项');
-  assert(!foreignDetail.success && foreignDetail.code === 'NOT_FOUND', '日程详情：第三方事项统一按不存在或无权访问处理');
+  assert(!foreignDetail.success && foreignDetail.code === 'ACCESS_DENIED', '日程详情：第三方事项按 pairKey 拒绝访问');
 
   const editedByPartner = await callAs(A, 'saveSchedule', {
     id: todoCreated.id, type: 'todo', title: '买猫粮和猫砂', date: '2026-08-24', startTime: '09:00',
@@ -652,7 +738,7 @@ function assert(cond, msg) {
   const foreignEdit = await callAs(I, 'saveSchedule', {
     id: scheduleCreated.id, type: 'schedule', title: '越权编辑', date: '2026-08-24'
   });
-  assert(!foreignEdit.success && foreignEdit.code === 'NOT_FOUND', '日程编辑：另一对绑定用户不能编辑');
+  assert(!foreignEdit.success && foreignEdit.code === 'ACCESS_DENIED', '日程编辑：另一对绑定用户不能编辑');
 
   const scheduleToggle = await callAs(B, 'toggleSchedule', { id: scheduleCreated.id, completed: true });
   assert(scheduleToggle.success && scheduleToggle.schedule.completed && scheduleToggle.schedule.completedBy === scheduleUserB()._id,
@@ -687,7 +773,7 @@ function assert(cond, msg) {
   const foreignDelete = await callAs(I, 'deleteSchedule', { id: deletePartnerTarget.id });
   const ownDelete = await callAs(A, 'deleteSchedule', { id: deleteOwnTarget.id });
   const partnerDelete = await callAs(B, 'deleteSchedule', { id: deletePartnerTarget.id });
-  assert(!foreignDelete.success && foreignDelete.code === 'NOT_FOUND', '日程删除：另一对绑定用户不能删除');
+  assert(!foreignDelete.success && foreignDelete.code === 'ACCESS_DENIED', '日程删除：另一对绑定用户不能删除');
   assert(ownDelete.success && !store.schedules.some((item) => item._id === deleteOwnTarget.id), '日程删除：创建人可以删除');
   assert(partnerDelete.success && !store.schedules.some((item) => item._id === deletePartnerTarget.id), '日程删除：伴侣也可以删除');
 
@@ -718,8 +804,7 @@ function assert(cond, msg) {
   };
   store.schedules.push(legacySchedule);
   const legacyDetail = await callAs(B, 'getScheduleDetail', { id: legacySchedule._id });
-  assert(legacyDetail.success && legacyDetail.schedule.ownerType === 'couple' && legacyDetail.schedule.ownerId === null &&
-    legacyDetail.schedule.ownerLabel === '双人' && legacyDetail.schedule.repeatType === 'none', 'V2 兼容：V1 老数据默认 couple + none');
+  assert(!legacyDetail.success && legacyDetail.code === 'DATA_ISOLATION_ERROR', 'V2 正式隔离：无 pairKey 旧事项拒绝读取');
 
   const daily = await callAs(A, 'saveSchedule', {
     type: 'todo', title: '每日运动', ownerType: 'couple', repeatType: 'daily',
@@ -810,7 +895,7 @@ function assert(cond, msg) {
   await callAs(A, 'toggleSchedule', { id: weekly.id, occurrenceDate: '2026-09-03', completed: true });
   const foreignRecurringDelete = await callAs(I, 'deleteSchedule', { id: weekly.id });
   const recurringDelete = await callAs(A, 'deleteSchedule', { id: weekly.id });
-  assert(!foreignRecurringDelete.success && foreignRecurringDelete.code === 'NOT_FOUND', 'V2 删除：第三方不能删除循环规则');
+  assert(!foreignRecurringDelete.success && foreignRecurringDelete.code === 'ACCESS_DENIED', 'V2 删除：第三方不能删除循环规则');
   assert(recurringDelete.success && !store.schedules.some((item) => item._id === weekly.id) && !store.schedule_completions.some((item) => item.scheduleId === weekly.id),
     'V2 删除：删除循环规则并清理 completion');
 
@@ -997,7 +1082,7 @@ function assert(cond, msg) {
     '首页性能：今日日程、待审批和纪念日独立并行加载');
   assert(!/Promise\.allSettled\([\s\S]{0,220}loadLatestReports/.test(indexJs),
     '首页性能：常规聚合仅并行今日日程和待审批');
-  assert(indexJs.includes('bannerKey !== this._bannerFileKey') && indexJs.includes('shouldRefreshBanner'), '首页性能：Banner fileID 未变化时复用临时 URL');
+  assert(!indexJs.includes('userInfo.banners') && indexJs.includes('this.refreshBannerUrls()'), '首页 Banner：不读取 users.banners，仅通过受控云函数刷新关系级数据');
   assert(indexJs.includes('now - (this._lastUserRefreshAt || 0) > 30000') && !indexJs.includes("name: 'getBillStats'"),
     '首页性能：登录资料短缓存且移除首页月账单统计请求');
   assert(indexWxml.includes('banner-swiper') && indexJs.includes('refreshBannerUrls') && indexWxml.includes('onManageBanners'),
@@ -1099,7 +1184,6 @@ function assert(cond, msg) {
     '纪念日保存同步：返回首页或我的后只刷新纪念日数据');
   assert(!indexWxml.includes('最近报备') && !indexWxml.includes('我们的今天'),
     '首页纪念日接入：不恢复最近报备或我们的今天');
-
   // ---------- 报备记录页固定发起入口 ----------
   console.log('\n== 报备记录页固定发起入口 ==');
   const recordJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'record', 'record.js'), 'utf8');
@@ -1187,23 +1271,24 @@ function assert(cond, msg) {
     indexJs.includes('banners: banners.slice()') && indexJs.includes('bannerUrls: bannerUrls.slice()'),
     'Banner 即时显示：后台刷新只接受预期版本，并使用新数组引用更新 swiper 数据源');
   assert(indexJs.includes('const bannerStateVersion = this._bannerStateVersion || 0') &&
-    indexJs.includes('if (!bannerStateChanged &&') && indexJs.includes('banners: this.data.banners.slice()'),
+    indexJs.includes('if (bannerStateChanged)') && indexJs.includes('else if (userInfo.partnerId)') &&
+    indexJs.includes('banners: this.data.banners.slice()'),
     'Banner 即时显示：裁剪返回触发的旧 init 不会覆盖刚完成的上传或删除状态');
-  assert(indexJs.includes('this.data.bannerLoadFailed || bannerCacheExpired') && indexJs.includes('this.refreshBannerUrls()'),
-    'Banner 刷新：失败状态在下次 onShow 初始化时自动重试');
+  assert(indexJs.includes('else if (userInfo.partnerId)') && indexJs.includes('this.refreshBannerUrls()'),
+    'Banner 刷新：绑定状态每次初始化核对当前 couple_settings，失败可在下次 onShow 重试');
   assert(indexJs.includes('saveReorder(list)') && indexJs.includes("data: { action: 'reorder', order: list }") &&
     indexJs.includes('currentCount >= 10'), 'Banner 兼容：现有排序流程和最多 10 张限制保持不变');
-  const banner1 = 'cloud://test-env/banners/a-1.jpg';
-  const banner2 = 'cloud://test-env/banners/a-2.jpg';
-  const banner3 = 'cloud://test-env/banners/a-3.jpg';
+  const banner1 = 'cloud://test-env/banners/openid-AAA/a-1.jpg';
+  const banner2 = 'cloud://test-env/banners/openid-AAA/a-2.jpg';
+  const banner3 = 'cloud://test-env/banners/openid-AAA/a-3.jpg';
   const strangerBanner = 'cloud://test-env/private/stranger.jpg';
-  const bannerUserA = () => store.users.find((user) => user.openid === A);
-  const bannerUserB = () => store.users.find((user) => user.openid === B);
+  const bannerUserA = () => store.couple_settings.find((settings) => settings.pairKey === expectedPairKey);
+  const bannerUserB = bannerUserA;
 
   const addBanner = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner1, banner2] });
   assert(addBanner.success && deepEqual(bannerUserA().banners, [banner1, banner2]) && deepEqual(bannerUserB().banners, [banner1, banner2]),
     'Banner add：双方原子写入同一个最终数组');
-  const duplicateAdd = await callAs(B, 'updateBanners', { action: 'add', fileIDs: [banner2, banner2] });
+  const duplicateAdd = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner2, banner2] });
   assert(duplicateAdd.success && deepEqual(duplicateAdd.banners, [banner1, banner2]), 'Banner add：重复 fileID 自动去重');
 
   const reorder = await callAs(A, 'updateBanners', { action: 'reorder', order: [banner2, banner1] });
@@ -1220,7 +1305,7 @@ function assert(cond, msg) {
   assert(removeBanner.success && deepEqual(bannerUserA().banners, [banner2]) && deepEqual(bannerUserB().banners, [banner2]),
     'Banner delete：正常删除并同步双方');
 
-  transactionFailAfterWrites = 1;
+  transactionFailAfterWrites = 0;
   const failedBannerWrite = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [banner3] });
   transactionFailAfterWrites = null;
   assert(!failedBannerWrite.success && deepEqual(bannerUserA().banners, [banner2]) && deepEqual(bannerUserB().banners, [banner2]),
@@ -1234,11 +1319,12 @@ function assert(cond, msg) {
     bannerUserA().banners.includes(banner1) && bannerUserA().banners.includes(banner3),
     'Banner 并发操作：基于事务最新数据计算且双方保持一致');
 
-  const originalPartnerId = bannerUserB().partnerId;
-  bannerUserB().partnerId = '';
+  const boundBannerUserB = store.users.find((user) => user.openid === B);
+  const originalPartnerId = boundBannerUserB.partnerId;
+  boundBannerUserB.partnerId = '';
   const mismatchedRelation = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [strangerBanner] });
-  bannerUserB().partnerId = originalPartnerId;
-  assert(!mismatchedRelation.success && mismatchedRelation.code === 'PARTNER_MISMATCH' && !bannerUserA().banners.includes(strangerBanner),
+  store.users.find((user) => user.openid === B).partnerId = originalPartnerId;
+  assert(!mismatchedRelation.success && mismatchedRelation.code === 'BINDING_INVALID' && !bannerUserA().banners.includes(strangerBanner),
     'Banner 双方关系不一致：拒绝更新且不写入');
 
   const arbitraryRead = await callAs(A, 'getSharedBanners', { fileIDs: [strangerBanner], fileID: strangerBanner });
@@ -1253,12 +1339,63 @@ function assert(cond, msg) {
     partialURLFailure.items.some((item) => item.success),
     'getSharedBanners：单张 URL 失败可识别且不影响其他图片');
 
-  const beforeConflictA = bannerUserA().banners.slice();
-  bannerUserB().banners = bannerUserB().banners.slice().reverse();
-  const historicalConflict = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [strangerBanner] });
-  assert(!historicalConflict.success && historicalConflict.code === 'BANNER_HISTORY_CONFLICT' && deepEqual(bannerUserA().banners, beforeConflictA),
-    'Banner 历史分叉：明确拒绝，不静默覆盖任一方');
-  bannerUserB().banners = beforeConflictA.slice();
+  const foreignEnvBanner = await callAs(A, 'updateBanners', { action: 'add', fileIDs: ['cloud://other-env/banners/openid-AAA/x.jpg'] });
+  const foreignOwnerBanner = await callAs(A, 'updateBanners', { action: 'add', fileIDs: ['cloud://test-env/banners/openid-CCC/x.jpg'] });
+  assert(!foreignEnvBanner.success && foreignEnvBanner.code === 'FILE_ENV_MISMATCH' &&
+    !foreignOwnerBanner.success && foreignOwnerBanner.code === 'FILE_OWNER_MISMATCH',
+    'Banner 来源校验：拒绝其他云环境和其他用户路径的 fileID');
+
+  const bannersBeforeAnniversaryPatch = bannerUserA().banners.slice();
+  await callAs(A, 'saveAnniversary', { anniversaryDate: '2025-08-25' });
+  assert(deepEqual(bannerUserA().banners, bannersBeforeAnniversaryPatch) && bannerUserA().anniversaryDate === '2025-08-25',
+    'couple_settings 字段保护：修改纪念日不覆盖 banners，修改 Banner 也保留 anniversaryDate');
+
+  const unboundBanners = await callAs(C, 'getSharedBanners');
+  const unboundBannerUpdate = await callAs(C, 'updateBanners', { action: 'add', fileIDs: ['cloud://test-env/banners/openid-CCC/c.jpg'] });
+  assert(!unboundBanners.success && unboundBanners.code === 'NOT_BOUND' &&
+    !unboundBannerUpdate.success && unboundBannerUpdate.code === 'NOT_BOUND',
+    'Banner 情侣资产：未绑定用户不能读取或维护');
+
+  const ijBanner = 'cloud://test-env/banners/openid-III/ij.jpg';
+  const ijAdd = await callAs(I, 'updateBanners', { action: 'add', fileIDs: [ijBanner] });
+  const ijRead = await callAs(J, 'getSharedBanners');
+  const abReadAfterIJ = await callAs(A, 'getSharedBanners');
+  assert(ijAdd.success && ijRead.success && ijRead.banners.includes(ijBanner) &&
+    !abReadAfterIJ.banners.includes(ijBanner) && !ijRead.banners.some((fileID) => bannersBeforeAnniversaryPatch.includes(fileID)),
+    'Banner 多情侣隔离：两对情侣只读取各自 couple_settings.banners');
+
+  const bindGHForMigration = await callAs(G, 'bind', { code: loginH.userInfo.bindCode });
+  const migrationUserG = store.users.find((user) => user.openid === G);
+  const migrationUserH = store.users.find((user) => user.openid === H);
+  const legacyBanners = ['cloud://test-env/banners/openid-GGG/legacy.jpg'];
+  migrationUserG.banners = legacyBanners.slice();
+  migrationUserH.banners = ['cloud://test-env/banners/openid-HHH/conflict.jpg'];
+  const migrationConflict = await callAs(G, 'migrateBanners', { mode: 'dryRun' });
+  assert(bindGHForMigration.success && !migrationConflict.success && migrationConflict.code === 'BANNER_HISTORY_CONFLICT',
+    'Banner 迁移：双方 users.banners 不一致时 dryRun 阻止迁移且不写入');
+  migrationUserH.banners = legacyBanners.slice();
+  const bannerMigrationDryRun = await callAs(G, 'migrateBanners', { mode: 'dryRun' });
+  const missingBannerMigrationConfirm = await callAs(G, 'migrateBanners', { mode: 'apply' });
+  assert(bannerMigrationDryRun.success && bannerMigrationDryRun.summary.toMigrate === 1 &&
+    !missingBannerMigrationConfirm.success && missingBannerMigrationConfirm.code === 'CONFIRM_REQUIRED',
+    'Banner 迁移：dryRun 完全只读，apply 必须显式 MIGRATE_BANNERS 确认');
+  const bannerMigrationApply = await callAs(G, 'migrateBanners', { mode: 'apply', confirm: 'MIGRATE_BANNERS' });
+  const bannerMigrationSecondApply = await callAs(G, 'migrateBanners', { mode: 'apply', confirm: 'MIGRATE_BANNERS' });
+  const bannerMigrationFinalDryRun = await callAs(H, 'migrateBanners', { mode: 'dryRun' });
+  const pairGH = [migrationUserG._id, migrationUserH._id].sort().join('|');
+  const migratedSettings = store.couple_settings.find((settings) => settings.pairKey === pairGH);
+  assert(bannerMigrationApply.success && bannerMigrationApply.migrated === 1 && deepEqual(migratedSettings.banners, legacyBanners) &&
+    bannerMigrationSecondApply.success && bannerMigrationSecondApply.migrated === 0 && bannerMigrationFinalDryRun.summary.toMigrate === 0 &&
+    bannerMigrationFinalDryRun.summary.alreadyMigrated && deepEqual(migrationUserG.banners, legacyBanners),
+    'Banner 迁移：只复制 fileID 引用，第二次 apply 幂等，最终 dryRun toMigrate=0');
+
+  const snapshotBill = { _id: 'profile-snapshot-bill', creatorId: migrationUserG._id, creatorName: '旧昵称', pairKey: pairGH };
+  const snapshotReport = { _id: 'profile-snapshot-report', creatorId: migrationUserG._id, partnerId: migrationUserH._id, creatorName: '旧昵称', processedByName: '旧审批名', pairKey: pairGH };
+  store.bills.push(snapshotBill);
+  store.reports.push(snapshotReport);
+  const profileUpdate = await callAs(G, 'updateProfile', { nickName: '新昵称' });
+  assert(profileUpdate.success && snapshotBill.creatorName === '旧昵称' && snapshotReport.creatorName === '旧昵称' && snapshotReport.processedByName === '旧审批名',
+    'updateProfile：昵称只更新用户资料，不批量修改历史 bills/reports 快照');
 
   // ---------- 账单固定入口结构 ----------
   console.log('\n== 账单固定入口结构 ==');
@@ -1409,6 +1546,8 @@ function assert(cond, msg) {
   console.log('\n== 账单 V2：分页、完整统计与共享月预算 ==');
   const userAId = store.users.find((u) => u.openid === A)._id;
   const userBId = store.users.find((u) => u.openid === B)._id;
+  const billPairKey = [userAId, userBId].sort().join('|');
+  const billMemberIds = [userAId, userBId].sort();
   for (let i = 0; i < 123; i++) {
     const mine = i % 2 === 0;
     const income = i % 5 === 0;
@@ -1417,6 +1556,7 @@ function assert(cond, msg) {
       creatorId: mine ? userAId : userBId,
       creatorName: mine ? 'A' : 'B',
       partnerId: mine ? userBId : userAId,
+      pairKey: billPairKey, memberIds: billMemberIds,
       type: income ? 'income' : 'expense',
       category: income ? 'salary' : (i % 3 === 0 ? 'food' : 'shopping'),
       categoryName: income ? '工资' : (i % 3 === 0 ? '餐饮' : '购物'),
@@ -1446,6 +1586,7 @@ function assert(cond, msg) {
       store.bills.push({
         _id: `boundary-${testCase.month}-${i}`,
         creatorId: userAId, creatorName: 'A', partnerId: userBId,
+        pairKey: billPairKey, memberIds: billMemberIds,
         type: 'expense', category: 'food', categoryName: '餐饮', amount: 1,
         billDate: `${testCase.month}-${String(1 + (i % 28)).padStart(2, '0')}`,
         createdAt: `${testCase.month}-15T12:00:00.000Z`
@@ -1495,6 +1636,7 @@ function assert(cond, msg) {
     store.bills.push({
       _id: `stats-${String(i).padStart(4, '0')}`, creatorId: i % 2 ? userAId : userBId,
       creatorName: i % 2 ? 'A' : 'B', partnerId: i % 2 ? userBId : userAId,
+      pairKey: billPairKey, memberIds: billMemberIds,
       type: i % 10 === 0 ? 'income' : 'expense', category: i % 2 ? 'food' : 'other',
       categoryName: i % 2 ? '餐饮' : '其他', amount: 1, billDate: '2026-06-15', createdAt: '2026-06-15T10:00:00.000Z'
     });
@@ -1519,11 +1661,13 @@ function assert(cond, msg) {
 
   [100, 7.5, 46.93].forEach((amount, index) => store.bills.push({
     _id: `budget-stable-${index}`, creatorId: index % 2 ? userAId : userBId,
+    pairKey: billPairKey, memberIds: billMemberIds,
     creatorName: index % 2 ? 'A' : 'B', type: 'expense', category: index === 2 ? 'shopping' : 'food',
     categoryName: index === 2 ? '购物' : '餐饮', amount, billDate: `2026-04-${String(index + 2).padStart(2, '0')}`, createdAt: `2026-04-0${index + 2}T10:00:00.000Z`
   }));
   store.bills.push({
     _id: 'budget-stable-income', creatorId: userAId, creatorName: 'A', type: 'income', category: 'salary',
+    pairKey: billPairKey, memberIds: billMemberIds,
     categoryName: '工资', amount: 500, billDate: '2026-04-08', createdAt: '2026-04-08T10:00:00.000Z'
   });
   const aprilBeforeBudget = await callAs(A, 'getBillStats', { yearMonth: '2026-04' });
@@ -1645,8 +1789,14 @@ function assert(cond, msg) {
   assert(cdBillRecord.pairKey === pairCD && cdBillRecord.partnerId === userD._id,
     'PairKey：C/D 新账单写入独立 pairKey');
 
-  const abReport = await callAs(A, 'createReport', { location: 'A地', returnTime: '2026-08-21 20:00', reason: '测试' });
-  const cdReport = await callAs(C, 'createReport', { location: 'C地', returnTime: '2026-08-21 20:00', reason: '测试' });
+  const abReport = await callAs(A, 'createReport', {
+    location: 'A地', returnTime: '2026-08-21 20:00', reason: '测试',
+    images: [`cloud://test-env/report-images/${A}/ab.jpg`]
+  });
+  const cdReport = await callAs(C, 'createReport', {
+    location: 'C地', returnTime: '2026-08-21 20:00', reason: '测试',
+    images: [`cloud://test-env/report-images/${C}/cd.jpg`]
+  });
   assert(store.reports.find((item) => item._id === abReport.id).pairKey === pairAB &&
     store.reports.find((item) => item._id === cdReport.id).pairKey === pairCD,
   'PairKey：A/B 与 C/D 新报备写入独立 pairKey');
@@ -1677,6 +1827,53 @@ function assert(cond, msg) {
   assert(cdBudget.success && cdBudget.budget.pairKey === pairCD && cdAnniversary.success && !!cdSettingsRecord,
     'PairKey：预算和纪念日继续忽略伪造 pairKey');
 
+  const abBudgetBeforeRebind = await callAs(A, 'saveBillBudget', { month: '2026-12', totalBudget: 66, categoryBudgets: {} });
+  const abAnniversaryBeforeRebind = await callAs(A, 'saveAnniversary', { anniversaryDate: '2025-01-02' });
+  const attackBillList = await callAs(A, 'getBills', { yearMonth: '2026-08', pairKey: pairCD });
+  const attackBillDetail = await callAs(A, 'getBillById', { id: cdBill.id });
+  const attackBillUpdate = await callAs(A, 'updateBill', { id: cdBill.id, type: 'expense', category: 'food', amount: 99, billDate: '2026-08-20' });
+  const attackBillDelete = await callAs(A, 'deleteBill', { id: cdBill.id });
+  assert(attackBillList.success && !attackBillList.list.some((item) => item.id === cdBill.id) &&
+    [attackBillDetail, attackBillUpdate, attackBillDelete].every((item) => !item.success && item.code === 'ACCESS_DENIED') &&
+    store.bills.some((item) => item._id === cdBill.id),
+  'Phase 3 Bills：A 无法通过列表、详情、修改、删除或伪造 pairKey 访问 C/D 账单');
+
+  const attackReportList = await callAs(A, 'getReports', { role: '', pairKey: pairCD });
+  const tempCallsBeforeCrossPairDetail = tempFileURLCalls.length;
+  const attackReportDetail = await callAs(A, 'getReportDetail', { reportId: cdReport.id });
+  const attackReportApprove = await callAs(A, 'approveReport', { reportId: cdReport.id, action: 'approve' });
+  const attackMessages = await callAs(A, 'getMessages');
+  assert(attackReportList.success && !attackReportList.list.some((item) => item._id === cdReport.id) &&
+    !attackReportDetail.success && attackReportDetail.code === 'ACCESS_DENIED' && tempFileURLCalls.length === tempCallsBeforeCrossPairDetail &&
+    !attackReportApprove.success && attackReportApprove.code === 'ACCESS_DENIED' &&
+    attackMessages.success && !attackMessages.list.some((item) => item.reportId === cdReport.id),
+  'Phase 3 Reports：A 无法查询、查看、审批 C/D 报备，消息中也不出现 C/D');
+
+  const attackScheduleList = await callAs(A, 'getSchedules', { date: '2026-08-20', pairKey: pairCD });
+  const attackScheduleDetail = await callAs(A, 'getScheduleDetail', { id: cdSchedule.id });
+  const attackScheduleEdit = await callAs(A, 'saveSchedule', {
+    id: cdSchedule.id, type: 'todo', title: '越权', ownerType: 'couple', repeatType: 'daily',
+    repeatStartDate: '2026-08-20', repeatEndDate: '2026-08-22'
+  });
+  const attackScheduleDelete = await callAs(A, 'deleteSchedule', { id: cdSchedule.id });
+  assert(attackScheduleList.success && !attackScheduleList.list.some((item) => item.scheduleId === cdSchedule.id) &&
+    [attackScheduleDetail, attackScheduleEdit, forgedScheduleToggle, attackScheduleDelete].every((item) =>
+      !item.success && item.code === 'ACCESS_DENIED') && store.schedules.some((item) => item._id === cdSchedule.id),
+  'Phase 3 Schedules：A 无法查询、查看、编辑、完成或删除 C/D 日程及其 completion');
+
+  const legacyBill = { _id: 'legacy-no-pair-bill', creatorId: userA._id, partnerId: userB._id, amount: 1, billDate: '2026-08-20' };
+  const legacyReport = { _id: 'legacy-no-pair-report', creatorId: userA._id, openid: A, partnerId: userB._id, status: 'pending' };
+  store.bills.push(legacyBill);
+  store.reports.push(legacyReport);
+  const legacyBillRead = await callAs(A, 'getBillById', { id: legacyBill._id });
+  const legacyBillUpdate = await callAs(A, 'updateBill', { id: legacyBill._id, type: 'expense', category: 'food', amount: 2, billDate: '2026-08-20' });
+  const legacyBillDelete = await callAs(A, 'deleteBill', { id: legacyBill._id });
+  const legacyReportRead = await callAs(A, 'getReportDetail', { reportId: legacyReport._id });
+  const legacyReportApprove = await callAs(B, 'approveReport', { reportId: legacyReport._id, action: 'approve' });
+  assert([legacyBillRead, legacyBillUpdate, legacyBillDelete, legacyReportRead, legacyReportApprove].every((item) =>
+    !item.success && item.code === 'DATA_ISOLATION_ERROR'),
+  'Phase 3 Legacy：缺少 pairKey 的 bill/report 正式详情与操作统一拒绝');
+
   const phaseLegacySchedule = {
     _id: 'legacy-no-pair-schedule', creatorId: userA._id, creatorName: 'A', type: 'todo', title: '旧事项',
     ownerType: 'couple', repeatType: 'none', date: '2026-08-23', completed: false
@@ -1685,13 +1882,35 @@ function assert(cond, msg) {
   const legacyEdit = await callAs(A, 'saveSchedule', {
     id: phaseLegacySchedule._id, type: 'todo', title: '旧事项编辑', ownerType: 'couple', repeatType: 'none', date: '2026-08-23'
   });
-  assert(legacyEdit.success && !store.schedules.find((item) => item._id === phaseLegacySchedule._id).pairKey,
-    'PairKey：编辑旧日程不会用当前伴侣危险回填 pairKey');
+  const legacyScheduleDetail = await callAs(A, 'getScheduleDetail', { id: phaseLegacySchedule._id });
+  const legacyScheduleToggle = await callAs(A, 'toggleSchedule', { id: phaseLegacySchedule._id, completed: true });
+  const legacyScheduleDelete = await callAs(A, 'deleteSchedule', { id: phaseLegacySchedule._id });
+  assert([legacyEdit, legacyScheduleDetail, legacyScheduleToggle, legacyScheduleDelete].every((item) =>
+    !item.success && item.code === 'DATA_ISOLATION_ERROR') &&
+    !store.schedules.find((item) => item._id === phaseLegacySchedule._id).pairKey,
+  'PairKey：缺少 pairKey 的旧日程拒绝详情、编辑、完成和删除且不会危险回填');
 
   await callAs(A, 'unbind');
   await callAs(C, 'unbind');
   await callAs(A, 'bind', { code: userC.bindCode });
   const pairAC = [userA._id, userC._id].sort().join('|');
+  const bannersAfterRebind = await callAs(A, 'getSharedBanners');
+  const acBanner = 'cloud://test-env/banners/openid-AAA/ac.jpg';
+  const createAcBanner = await callAs(A, 'updateBanners', { action: 'add', fileIDs: [acBanner] });
+  const acBannersForC = await callAs(C, 'getSharedBanners');
+  const acBannersForB = await callAs(B, 'getSharedBanners');
+  assert(bannersAfterRebind.success && bannersAfterRebind.banners.length === 0 && createAcBanner.success &&
+    acBannersForC.success && deepEqual(acBannersForC.banners, [acBanner]) &&
+    !acBannersForB.success && acBannersForB.code === 'NOT_BOUND',
+    'Phase 4A Rebind：A/C 不读取 A/B Banner，可创建自己的 Banner，解绑后的 B 不能读取 A/C');
+
+  const oldAbBillForProfile = store.bills.find((item) => item._id === abBill.id);
+  const oldAbReportForProfile = store.reports.find((item) => item._id === abReport.id);
+  const oldAbBillName = oldAbBillForProfile.creatorName;
+  const oldAbReportName = oldAbReportForProfile.creatorName;
+  await callAs(A, 'updateProfile', { nickName: 'A重绑后昵称' });
+  assert(oldAbBillForProfile.creatorName === oldAbBillName && oldAbReportForProfile.creatorName === oldAbReportName,
+    'Phase 4A Rebind：A 修改昵称不会改写旧 A/B bills/reports 快照');
   const acBill = await callAs(A, 'addBill', { type: 'expense', category: 'other', amount: 21, billDate: '2026-08-24' });
   const acSchedule = await callAs(A, 'saveSchedule', { type: 'todo', title: 'AC事项', ownerType: 'couple', repeatType: 'none', date: '2026-08-24' });
   const acReport = await callAs(A, 'createReport', { location: 'AC地', returnTime: '2026-08-24 20:00', reason: '测试' });
@@ -1699,18 +1918,207 @@ function assert(cond, msg) {
     store.schedules.find((item) => item._id === acSchedule.id).pairKey === pairAC &&
     store.reports.find((item) => item._id === acReport.id).pairKey === pairAC && pairAC !== pairAB,
   'PairKey：A/B 解绑后 A/C 新账单、日程、报备全部切换为 A|C');
+  const acBillsForA = await callAs(A, 'getBills', { yearMonth: '2026-08' });
+  const acBillsForC = await callAs(C, 'getBills', { yearMonth: '2026-08' });
+  const acReportsForA = await callAs(A, 'getReports', { role: '' });
+  const acReportsForC = await callAs(C, 'getReports', { role: '' });
+  const acSchedulesForA = await callAs(A, 'getSchedules', { date: '2026-08-24' });
+  const acSchedulesForC = await callAs(C, 'getSchedules', { date: '2026-08-24' });
+  const oldBudgetAfterRebind = await callAs(A, 'getBillStats', { yearMonth: '2026-12' });
+  const oldAnniversaryAfterRebind = await callAs(A, 'getCoupleSettings');
+  const oldBillAfterRebind = await callAs(A, 'getBillById', { id: abBill.id });
+  const oldReportAfterRebind = await callAs(A, 'getReportDetail', { reportId: abReport.id });
+  const oldScheduleAfterRebind = await callAs(A, 'getScheduleDetail', { id: abSchedule.id });
+  const bReadsAc = await Promise.all([
+    callAs(B, 'getBillById', { id: acBill.id }),
+    callAs(B, 'getReportDetail', { reportId: acReport.id }),
+    callAs(B, 'getScheduleDetail', { id: acSchedule.id })
+  ]);
+  assert(abBudgetBeforeRebind.success && abAnniversaryBeforeRebind.success &&
+    acBillsForA.list.some((item) => item.id === acBill.id) && acBillsForC.list.some((item) => item.id === acBill.id) &&
+    !acBillsForA.list.some((item) => item.id === abBill.id) &&
+    acReportsForA.list.some((item) => item._id === acReport.id) && acReportsForC.list.some((item) => item._id === acReport.id) &&
+    !acReportsForA.list.some((item) => item._id === abReport.id) &&
+    acSchedulesForA.list.some((item) => item.scheduleId === acSchedule.id) && acSchedulesForC.list.some((item) => item.scheduleId === acSchedule.id) &&
+    !acSchedulesForA.list.some((item) => item.scheduleId === abSchedule.id) &&
+    oldBudgetAfterRebind.budget === null && (!oldAnniversaryAfterRebind.settings || !oldAnniversaryAfterRebind.settings.anniversaryDate),
+  'Phase 3 Rebind：A/C 共享新数据且看不到 A/B 的账单、报备、日程、预算和纪念日');
+  assert([oldBillAfterRebind, oldReportAfterRebind, oldScheduleAfterRebind].every((item) =>
+    !item.success && item.code === 'ACCESS_DENIED') && bReadsAc.every((item) => !item.success),
+  'Phase 3 Rebind：旧关系 ID 访问被拒绝，B 也无法读取 A/C 新共享数据');
 
   const migrationAudit = require('./audit_pairkey_migration');
+  const migrationConfig = {
+    knownPairs: [
+      { memberIds: [userA._id, userB._id], pairKey: pairAB },
+      { memberIds: [userC._id, userD._id], pairKey: pairCD }
+    ],
+    legacyScheduleOwnership: { [userA._id]: pairAB }
+  };
   const dryRun = migrationAudit.analyzeMigration({
-    bills: [{ _id: 'b1', creatorId: userA._id, partnerId: userB._id }, { _id: 'b2', creatorId: userA._id }],
-    reports: [{ _id: 'r1', creatorId: userC._id, partnerId: userD._id }],
-    schedules: [{ _id: 's-old', creatorId: userA._id }, { _id: 's-new', creatorId: userA._id, pairKey: pairAB }],
-    schedule_completions: [{ _id: 'c-old', scheduleId: 's-old' }, { _id: 'c-new', scheduleId: 's-new' }]
+    bills: [
+      { _id: 'b-safe', creatorId: userA._id, partnerId: userB._id },
+      { _id: 'b-manual', creatorId: userA._id },
+      { _id: 'b-done', creatorId: userA._id, partnerId: userB._id, pairKey: pairAB, memberIds: [userA._id, userC._id] }
+    ],
+    reports: [{ _id: 'r-safe', creatorId: userC._id, partnerId: userD._id }],
+    schedules: [
+      { _id: 's-safe', creatorId: userA._id },
+      { _id: 's-manual', creatorId: userC._id },
+      { _id: 's-done', creatorId: userA._id, pairKey: pairAB, memberIds: [userA._id, userB._id] }
+    ],
+    schedule_completions: [
+      { _id: 'c-safe', scheduleId: 's-safe' },
+      { _id: 'c-manual', scheduleId: 's-manual' },
+      { _id: 'c-done', scheduleId: 's-done', pairKey: pairAB, memberIds: [userA._id, userB._id] },
+      { _id: 'c-orphan', scheduleId: 'missing' }
+    ],
+    bill_budgets: [
+      { _id: 'budget-1', pairKey: pairAB, memberIds: [userA._id, userB._id], month: '2026-01' },
+      { _id: 'budget-2', pairKey: pairAB, memberIds: [userA._id, userB._id], month: '2026-01' }
+    ],
+    couple_settings: [{ _id: 'settings-bad', pairKey: pairAB, memberIds: [userA._id, userC._id] }]
+  }, migrationConfig);
+  assert(dryRun.report.autoSafe.bills.some((item) => item._id === 'b-safe') &&
+    dryRun.report.manualReview.bills.some((item) => item._id === 'b-manual') &&
+    dryRun.report.autoSafe.reports.some((item) => item._id === 'r-safe'),
+  'PairKey migration：bill/report 仅在记录参与者命中 knownPairs 时 AUTO_SAFE');
+  assert(dryRun.report.autoSafe.schedules.some((item) => item._id === 's-safe') &&
+    dryRun.report.manualReview.schedules.some((item) => item._id === 's-manual'),
+  'PairKey migration：旧 schedule 只有显式 legacyScheduleOwnership 才 AUTO_SAFE');
+  assert(dryRun.report.autoSafe.schedule_completions.some((item) => item._id === 'c-safe') &&
+    dryRun.report.manualReview.schedule_completions.some((item) => item._id === 'c-manual') &&
+    dryRun.report.manualReview.schedule_completions.some((item) => item._id === 'c-orphan'),
+  'PairKey migration：completion 继承可信父日程，不确定或缺失父日程进入 MANUAL_REVIEW');
+  assert(dryRun.report.alreadyMigrated.bills.some((item) => item._id === 'b-done') &&
+    dryRun.report.alreadyMigrated.schedule_completions.some((item) => item._id === 'c-done'),
+  'PairKey migration：已有 pairKey 的记录识别为 ALREADY_MIGRATED');
+  assert(dryRun.report.warnings.some((item) => item.code === 'PAIRKEY_MEMBERIDS_MISMATCH') &&
+    dryRun.report.warnings.some((item) => item.code === 'DUPLICATE_PAIR_MONTH_BUDGET') &&
+    dryRun.report.warnings.some((item) => item.code === 'COMPLETION_PARENT_NOT_FOUND'),
+  'PairKey migration：已有字段不一致、预算重复和孤儿 completion 均输出 WARN');
+  assert(dryRun.patch.bills.length === 1 && dryRun.patch.bills[0].set.pairKey === pairAB &&
+    dryRun.patch.schedules.length === 1 && dryRun.patch.schedule_completions.length === 1,
+  'PairKey migration patch：只包含 AUTO_SAFE，completion 只补 pairKey');
+  assert(migrationAudit.unwrapRecords([{ _id: 1 }]).length === 1 &&
+    migrationAudit.unwrapRecords({ data: [{ _id: 1 }] }).length === 1 &&
+    migrationAudit.unwrapRecords({ records: [{ _id: 1 }] }).length === 1,
+  'PairKey migration 输入：兼容数组、data 和 records 三种导出包装');
+
+  const conflict = migrationAudit.analyzeMigration({ bills: [{ _id: 'blocked', creatorId: userA._id, partnerId: userB._id }] }, {
+    knownPairs: [
+      { memberIds: [userA._id, userB._id], pairKey: pairAB },
+      { memberIds: [userA._id, userC._id], pairKey: pairAC }
+    ]
   });
-  assert(dryRun.bills[0].status === 'CANDIDATE' && dryRun.bills[1].status === 'MANUAL_REVIEW' &&
-    dryRun.schedules[0].status === 'MANUAL_REVIEW' && dryRun.schedule_completions[0].status === 'MANUAL_REVIEW' &&
-    dryRun.schedule_completions[1].pairKey === pairAB,
-  'PairKey migration dry-run：可推导记录给 candidate，不确定日程/completion 标 MANUAL_REVIEW');
+  assert(conflict.report.patchBlocked && conflict.report.warnings.some((item) => item.code === 'USER_IN_MULTIPLE_KNOWN_PAIRS') && conflict.patch.bills.length === 0,
+    'PairKey migration 配置：用户出现在多个 knownPair 时 WARN 并拒绝生成 patch');
+
+  // ---------- 多情侣数据隔离 V1.1 Phase 2：一次性迁移云函数 ----------
+  const migrationCollections = ['bills', 'reports', 'schedules', 'schedule_completions'];
+  const originalMigrationData = {};
+  migrationCollections.forEach((name) => { originalMigrationData[name] = store[name]; });
+  function setMigrationData(overrides) {
+    store.bills = [{ _id: 'mb-1', creatorId: userA._id, partnerId: userC._id, type: 'expense', amount: 12.34, note: '不变' }];
+    store.reports = [{ _id: 'mr-1', creatorId: userC._id, partnerId: userA._id, status: 'pending', reason: '不变' }];
+    store.schedules = [{ _id: 'ms-1', creatorId: userA._id, repeatType: 'daily', title: '不变' }];
+    store.schedule_completions = [{ _id: 'mc-1', scheduleId: 'ms-1', completedBy: userC._id }];
+    Object.keys(overrides || {}).forEach((name) => { store[name] = overrides[name]; });
+  }
+
+  setMigrationData();
+  const identityFailureData = JSON.stringify(migrationCollections.map((name) => store[name]));
+  const noOpenidMigration = await callAs(undefined, 'migratePairKey', { mode: 'dryRun' });
+  const missingUserMigration = await callAs('migration-missing-user', 'migratePairKey', { mode: 'dryRun' });
+  const identityFixtures = [
+    { _id: 'migration-unbound', openid: 'migration-unbound-openid', partnerId: '' },
+    { _id: 'migration-missing-partner', openid: 'migration-missing-partner-openid', partnerId: 'migration-absent' },
+    { _id: 'migration-one-way-a', openid: 'migration-one-way-openid', partnerId: 'migration-one-way-b' },
+    { _id: 'migration-one-way-b', openid: 'migration-one-way-partner-openid', partnerId: '' }
+  ];
+  store.users.push(...identityFixtures);
+  const unboundMigration = await callAs('migration-unbound-openid', 'migratePairKey', { mode: 'dryRun' });
+  const missingPartnerMigration = await callAs('migration-missing-partner-openid', 'migratePairKey', { mode: 'dryRun' });
+  const invalidBindingMigration = await callAs('migration-one-way-openid', 'migratePairKey', { mode: 'dryRun' });
+  store.users.splice(store.users.length - identityFixtures.length, identityFixtures.length);
+  assert(noOpenidMigration.code === 'NO_OPENID' && missingUserMigration.code === 'USER_NOT_FOUND' &&
+    unboundMigration.code === 'NOT_BOUND' && missingPartnerMigration.code === 'PARTNER_NOT_FOUND' &&
+    invalidBindingMigration.code === 'BINDING_INVALID' &&
+    JSON.stringify(migrationCollections.map((name) => store[name])) === identityFailureData,
+  'migratePairKey：OPENID、用户、未绑定、伴侣缺失和非双向绑定均明确拒绝且不扫描写入');
+
+  setMigrationData();
+  const beforeDryRun = JSON.stringify(migrationCollections.map((name) => store[name]));
+  const migrationDryRun = await callAs(A, 'migratePairKey', { mode: 'dryRun', pairKey: pairAB, memberIds: [userA._id, userB._id] });
+  assert(migrationDryRun.success && migrationDryRun.mode === 'dryRun' && migrationDryRun.pairKey === pairAC &&
+    migrationDryRun.summary.bills.toMigrate === 1 && migrationDryRun.summary.reports.toMigrate === 1 &&
+    migrationDryRun.summary.schedules.toMigrate === 1 && migrationDryRun.summary.scheduleCompletions.toMigrate === 1 &&
+    JSON.stringify(migrationCollections.map((name) => store[name])) === beforeDryRun,
+  'migratePairKey：dryRun 使用真实当前情侣、识别全部旧数据且完全不写数据库');
+
+  setMigrationData({ bills: [{ _id: 'bad-bill', creatorId: userA._id, partnerId: userB._id }] });
+  const blockedBill = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'bills' });
+  setMigrationData({ reports: [{ _id: 'bad-report', creatorId: userA._id, partnerId: userB._id }] });
+  const blockedReport = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'reports' });
+  setMigrationData({ schedules: [{ _id: 'bad-schedule', creatorId: userB._id }], schedule_completions: [] });
+  const blockedSchedule = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'schedules' });
+  setMigrationData({ schedule_completions: [{ _id: 'orphan', scheduleId: 'missing' }] });
+  const blockedCompletion = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'schedule_completions' });
+  assert([blockedBill, blockedReport, blockedSchedule, blockedCompletion].every((item) =>
+    !item.success && item.code === 'MIGRATION_BLOCKED'),
+  'migratePairKey：非当前情侣 bill/report、未知 schedule creator、孤儿 completion 全部阻止 apply');
+
+  setMigrationData();
+  const missingConfirm = await callAs(A, 'migratePairKey', { mode: 'apply' });
+  const wrongConfirm = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'WRONG' });
+  assert([missingConfirm, wrongConfirm].every((item) => !item.success && item.code === 'CONFIRM_REQUIRED') &&
+    store.bills[0].pairKey === undefined,
+  'migratePairKey：apply 缺少或错误 confirm 时不扫描写入');
+  const missingCollection = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE' });
+  assert(!missingCollection.success && missingCollection.code === 'APPLY_COLLECTION_REQUIRED' && store.bills[0].pairKey === undefined,
+    'migratePairKey：分批 apply 必须指定受支持的 collection');
+
+  setMigrationData({
+    reports: Array.from({ length: 11 }, (_, index) => ({
+      _id: `mr-batch-${index}`, creatorId: userC._id, partnerId: userA._id, status: 'pending', reason: `不变-${index}`
+    }))
+  });
+  const businessBeforeApply = {
+    bill: { type: store.bills[0].type, amount: store.bills[0].amount, note: store.bills[0].note },
+    report: { status: store.reports[0].status, reason: store.reports[0].reason },
+    schedule: { title: store.schedules[0].title, repeatType: store.schedules[0].repeatType },
+    completion: { scheduleId: store.schedule_completions[0].scheduleId, completedBy: store.schedule_completions[0].completedBy }
+  };
+  const billBatch = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'bills', pairKey: pairAB, partnerId: userB._id });
+  const reportBatch1 = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'reports' });
+  const reportBatch2 = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'reports' });
+  const scheduleBatch = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'schedules' });
+  const completionBatch = await callAs(A, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection: 'schedule_completions' });
+  const migrationVerification = await callAs(A, 'migratePairKey', { mode: 'dryRun' });
+  assert(billBatch.success && billBatch.done && reportBatch1.success && reportBatch1.updated === 10 && !reportBatch1.done &&
+    reportBatch1.batchLimit === 10 && reportBatch2.success && reportBatch2.updated === 1 && reportBatch2.done &&
+    scheduleBatch.success && completionBatch.success && migrationVerification.success &&
+    Object.values(migrationVerification.summary).every((item) => item.toMigrate === 0 && item.errors === 0) &&
+    store.bills[0].pairKey === pairAC && deepEqual(store.bills[0].memberIds, [userA._id, userC._id].sort()) &&
+    store.reports.every((item) => item.pairKey === pairAC) && store.schedules[0].pairKey === pairAC &&
+    store.schedule_completions[0].pairKey === pairAC,
+  'migratePairKey：单次最多10条，按集合续跑后由最终 dryRun 确认全部迁移');
+  assert(deepEqual(businessBeforeApply, {
+    bill: { type: store.bills[0].type, amount: store.bills[0].amount, note: store.bills[0].note },
+    report: { status: store.reports[0].status, reason: store.reports[0].reason },
+    schedule: { title: store.schedules[0].title, repeatType: store.schedules[0].repeatType },
+    completion: { scheduleId: store.schedule_completions[0].scheduleId, completedBy: store.schedule_completions[0].completedBy }
+  }), 'migratePairKey：apply 不修改任何业务字段');
+
+  const secondDryRun = await callAs(C, 'migratePairKey', { mode: 'dryRun' });
+  const secondApplyResults = [];
+  for (const collection of migrationCollections) {
+    secondApplyResults.push(await callAs(C, 'migratePairKey', { mode: 'apply', confirm: 'MIGRATE', collection }));
+  }
+  assert(secondDryRun.success && secondDryRun.summary.bills.toMigrate === 0 &&
+    secondApplyResults.every((item) => item.success && item.done && item.updated === 0),
+  'migratePairKey：第二次 dryRun/apply 均幂等，不覆盖已有 pairKey');
+  migrationCollections.forEach((name) => { store[name] = originalMigrationData[name]; });
 
   // ---------- 汇总 ----------
   console.log('\n================ 测试结果 ================');

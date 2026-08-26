@@ -83,30 +83,19 @@ Page({
     }
     if (requestId !== this._initRequestId) return;
     this._loaded = true;
-    const newBanners = Array.isArray(userInfo.banners) ? userInfo.banners : [];
     const bannerStateChanged = bannerStateVersion !== (this._bannerStateVersion || 0);
-    console.log('[init] banners从DB获取:', newBanners.length, '个', newBanners.map(function (f) { return typeof f === 'string' ? f.slice(-20) : typeof f; }));
     const update = {
       loading: false,
       userInfo,
       bound: !!userInfo.partnerId,
       partnerName: userInfo.partnerName || '伴侣'
     };
-    // 仅在 banners 实际变化时才 setData，避免 swiper 被无谓重建导致滑动卡顿
-    const oldBanners = this.data.banners;
-    if (!bannerStateChanged && (newBanners.length !== oldBanners.length || newBanners.some((v, i) => v !== oldBanners[i]))) {
-      update.banners = newBanners;
-    }
     this.setData(update);
     if (bannerStateChanged) {
       app.globalData.userInfo = Object.assign({}, app.globalData.userInfo, { banners: this.data.banners.slice() });
-    } else {
-      const bannerKey = newBanners.join('|');
-      const bannerCacheExpired = Date.now() - (this._bannerUrlRefreshedAt || 0) > 20 * 60 * 1000;
-      const shouldRefreshBanner = bannerKey !== this._bannerFileKey ||
-        (newBanners.length > 0 && (this.data.bannerUrls.length === 0 || this.data.bannerLoadFailed || bannerCacheExpired));
-      this._bannerFileKey = bannerKey;
-      if (shouldRefreshBanner) this.refreshBannerUrls();
+    } else if (userInfo.partnerId) {
+      // couple_settings 是唯一正式数据源；每次初始化都核对当前关系，避免重绑后沿用旧 Banner。
+      this.refreshBannerUrls();
     }
     if (userInfo.partnerId) {
       // 两个聚合模块互不依赖，并行加载；各自负责失败降级。
@@ -122,6 +111,7 @@ Page({
       }
     } else {
       this.setData({
+        banners: [], bannerUrls: [], bannerCurrent: 0, bannerLoadFailed: false,
         todaySchedules: [], todayScheduleTotal: 0, todayScheduleHasMore: false, todayScheduleError: false,
         pendingReports: [], pendingError: false,
         anniversaryDate: '', anniversaryDateText: '', anniversaryDays: 0, anniversaryError: false

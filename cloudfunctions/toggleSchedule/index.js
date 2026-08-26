@@ -25,7 +25,11 @@ function isDuplicateError(err) {
   return /duplicate|duplicated|E11000|-502001|unique/i.test(message);
 }
 function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || record.pairKey === pair.pairKey; }
+function pairAccessError(record, pair) {
+  if (!record.pairKey) return { success: false, code: 'DATA_ISOLATION_ERROR', msg: '事项缺少数据隔离标识' };
+  if (record.pairKey !== pair.pairKey) return { success: false, code: 'ACCESS_DENIED', msg: '无权操作此事项' };
+  return null;
+}
 async function getCurrentPair(openid) {
   const users = db.collection('users');
   const res = await users.where({ openid }).get();
@@ -56,7 +60,9 @@ exports.main = async (event = {}) => {
     const ref = db.collection('schedules').doc(id);
     const res = await ref.get().catch(() => null);
     const schedule = res && res.data;
-    if (!schedule || !auth.userIds.includes(schedule.creatorId) || !assertPairRecordAccess(schedule, auth)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
+    if (!schedule) return { success: false, code: 'NOT_FOUND', msg: '事项不存在' };
+    const accessError = pairAccessError(schedule, auth);
+    if (accessError) return accessError;
     if (!['schedule', 'todo', 'checkin'].includes(schedule.type)) return { success: false, code: 'INVALID_TYPE', msg: '事项类型异常' };
     const repeatType = ['daily', 'weekly', 'monthly'].includes(schedule.repeatType) ? schedule.repeatType : 'none';
     const recurring = repeatType !== 'none';
@@ -75,7 +81,7 @@ exports.main = async (event = {}) => {
     }
     const completions = db.collection('schedule_completions');
     const findCompletion = async () => {
-      const found = await completions.where({ scheduleId: id, occurrenceDate }).get();
+      const found = await completions.where({ pairKey: auth.pairKey, scheduleId: id, occurrenceDate }).get();
       return found.data[0] || null;
     };
     if (event.completed) {
@@ -85,8 +91,7 @@ exports.main = async (event = {}) => {
         scheduleId: id, occurrenceDate, completedBy: auth.me._id,
         completedByName: auth.me.nickName || '伴侣', completedAt: now, updatedAt: now
       };
-      if (schedule.pairKey) completion.pairKey = schedule.pairKey;
-      else console.warn('[PairMigration][SCHEDULE_COMPLETION_CANDIDATE]', { scheduleId: id.slice(-8) });
+      completion.pairKey = schedule.pairKey;
       try {
         const added = await completions.add({ data: completion });
         return recurringResult(schedule, occurrenceDate, Object.assign({ _id: added._id }, completion));

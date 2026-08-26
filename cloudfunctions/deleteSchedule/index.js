@@ -4,7 +4,11 @@ cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
 function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
-function assertPairRecordAccess(record, pair) { return !record.pairKey || record.pairKey === pair.pairKey; }
+function pairAccessError(record, pair) {
+  if (!record.pairKey) return { success: false, code: 'DATA_ISOLATION_ERROR', msg: '事项缺少数据隔离标识' };
+  if (record.pairKey !== pair.pairKey) return { success: false, code: 'ACCESS_DENIED', msg: '无权删除此事项' };
+  return null;
+}
 async function getCurrentPair(openid) {
   const users = db.collection('users');
   const res = await users.where({ openid }).get();
@@ -29,9 +33,9 @@ exports.main = async (event = {}) => {
     const ref = db.collection('schedules').doc(id);
     const res = await ref.get().catch(() => null);
     const schedule = res && res.data;
-    if (!schedule || !auth.userIds.includes(schedule.creatorId) || !assertPairRecordAccess(schedule, auth)) {
-      return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
-    }
+    if (!schedule) return { success: false, code: 'NOT_FOUND', msg: '事项不存在' };
+    const accessError = pairAccessError(schedule, auth);
+    if (accessError) return accessError;
     const recurring = ['daily', 'weekly', 'monthly'].includes(schedule.repeatType);
     await ref.remove();
     if (recurring) {
@@ -39,7 +43,7 @@ exports.main = async (event = {}) => {
         const completions = db.collection('schedule_completions');
         // 规则已删除后，残留 completion 不再能被查询或操作；逐条清理失败仅记录日志。
         while (true) {
-          const res = await completions.where({ scheduleId: id }).limit(100).get();
+          const res = await completions.where({ pairKey: auth.pairKey, scheduleId: id }).limit(100).get();
           if (!res.data.length) break;
           await Promise.all(res.data.map((item) => completions.doc(item._id).remove()));
           if (res.data.length < 100) break;
