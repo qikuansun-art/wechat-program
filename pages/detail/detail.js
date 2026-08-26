@@ -9,6 +9,7 @@ Page({
     // 我的角色：creator=我是发起人，approver=我是审批人
     myRole: '',
     canApprove: false,
+    approving: false,
     // 驳回弹层
     showReject: false,
     rejectReason: ''
@@ -39,12 +40,8 @@ Page({
         setTimeout(() => wx.navigateBack(), 1000);
         return;
       }
-      const report = result.report;
+      const report = this.formatReport(result.report);
       const myRole = result.myRole || '';
-      report.createdAtText = util.prettyTime(report.createdAt);
-      report.processedAtText = util.prettyTime(report.processedAt);
-      report.statusText = util.statusText(report.status);
-      report.statusClass = util.statusClass(report.status);
 
       this.setData({
         loading: false,
@@ -63,6 +60,15 @@ Page({
       this.setData({ loading: false });
       util.toast('加载失败，请重试');
     }
+  },
+
+  formatReport(report) {
+    const formatted = Object.assign({}, report);
+    formatted.createdAtText = util.prettyTime(formatted.createdAt);
+    formatted.processedAtText = util.prettyTime(formatted.processedAt);
+    formatted.statusText = util.statusText(formatted.status);
+    formatted.statusClass = util.statusClass(formatted.status);
+    return formatted;
   },
 
   /** 预览图片（转临时链接） */
@@ -152,27 +158,67 @@ Page({
 
   /** 执行审批 */
   async doApprove(action, reason) {
+    if (this.data.approving || !this.data.canApprove) return;
     // 审批时再次请求订阅授权（根据角色授权对应模板）
     this.requestSubscribe();
+    this.setData({ approving: true });
     wx.showLoading({ title: '提交中...', mask: true });
     try {
       const res = await wx.cloud.callFunction({
         name: 'approveReport',
         data: { reportId: this.reportId, action, reason: reason || '' }
       });
-      wx.hideLoading();
       const result = res.result || {};
+      console.log('[Approve][CALL_RESOLVE]', { success: result.success === true, code: result.code || '' });
       if (result.success) {
-        this.setData({ showReject: false });
-        util.toast(action === 'approve' ? '已批准' : '已驳回');
-        setTimeout(() => this.loadDetail(), 500);
+        this.finishApproval(action);
       } else {
-        util.toast(result.msg || '操作失败，请重试');
+        await this.reconcileApproval(action);
       }
     } catch (err) {
+      console.error('[Approve][CALL_REJECT]', { errMsg: err && err.errMsg, errCode: err && err.errCode });
+      await this.reconcileApproval(action);
+    } finally {
       wx.hideLoading();
-      console.error('审批失败', err);
-      util.toast('操作失败，请检查网络');
+    }
+  },
+
+  finishApproval(action, report) {
+    const targetStatus = action === 'approve' ? 'approved' : 'rejected';
+    const nextReport = this.formatReport(report || Object.assign({}, this.data.report, { status: targetStatus }));
+    this.setData({ report: nextReport, canApprove: false, approving: false, showReject: false });
+    console.log('[Approve][FINAL_DECISION]', { decision: 'success', status: targetStatus });
+    util.toast(action === 'approve' ? '已批准' : '已驳回');
+  },
+
+  async reconcileApproval(action) {
+    const targetStatus = action === 'approve' ? 'approved' : 'rejected';
+    console.log('[Approve][RECONCILE_START]', { targetStatus });
+    try {
+      const res = await wx.cloud.callFunction({ name: 'getReportDetail', data: { reportId: this.reportId } });
+      const result = res.result || {};
+      const report = result.success && result.report ? result.report : null;
+      console.log('[Approve][RECONCILE_RESULT]', { success: !!report, status: report && report.status || '' });
+      if (!report) throw new Error(result.msg || '对账失败');
+      if (report.status === targetStatus) {
+        this.finishApproval(action, report);
+        return;
+      }
+      const formatted = this.formatReport(report);
+      if (report.status === 'pending') {
+        this.setData({ report: formatted, canApprove: false, approving: false, showReject: false });
+        console.log('[Approve][FINAL_DECISION]', { decision: 'unknown', status: report.status });
+        util.toast('审批状态未确认，请稍后刷新');
+        return;
+      }
+      this.setData({ report: formatted, canApprove: false, approving: false, showReject: false });
+      console.log('[Approve][FINAL_DECISION]', { decision: 'conflict', status: report.status });
+      util.toast('该报备已被处理，请查看最新结果');
+    } catch (err) {
+      console.error('[Approve][RECONCILE_RESULT]', { success: false, errMsg: err && (err.errMsg || err.message) });
+      this.setData({ approving: false, canApprove: false, showReject: false });
+      console.log('[Approve][FINAL_DECISION]', { decision: 'unknown' });
+      util.toast('审批状态未确认，请稍后刷新');
     }
   }
 });

@@ -14,6 +14,7 @@ const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
 let transactionTail = Promise.resolve();
 let transactionFailAfterWrites = null;
+let transactionReturnDirect = false;
 
 function cloneValue(value) {
   if (value instanceof Date) return new Date(value.getTime());
@@ -234,7 +235,7 @@ const mockCloud = {
         };
         try {
           const result = await callback(transaction);
-          return { result, errMsg: 'runTransaction:ok' };
+          return transactionReturnDirect ? result : { result, errMsg: 'runTransaction:ok' };
         } catch (err) {
           restoreStore(snapshot);
           throw err;
@@ -520,6 +521,44 @@ function assert(cond, msg) {
     '微信无有效授权：审批仍成功且不回滚');
   assert(store.subscriptions.find((s) => s.openid === A && s.tmplId === TEMPLATE_APPROVE_RESULT).count === 0,
     '微信明确返回无有效授权：本地非可信估算值修正为 0');
+
+  const directTxReport = await callAs(A, 'createReport', {
+    location: '真实事务返回形态', returnTime: '18:30', reason: '事务结果不带 result 包装'
+  });
+  transactionReturnDirect = true;
+  const directTxApproval = await callAs(B, 'approveReport', { reportId: directTxReport.id, action: 'approve' });
+  transactionReturnDirect = false;
+  assert(directTxApproval.success && store.reports.find((r) => r._id === directTxReport.id).status === 'approved',
+    '审批事务：不依赖 runTransaction 的 result 包装，提交后稳定返回 success=true');
+
+  const transactionFailureReport = await callAs(A, 'createReport', {
+    location: '事务失败测试', returnTime: '18:45', reason: '事务失败不能误报成功'
+  });
+  transactionFailAfterWrites = 0;
+  const transactionFailureApproval = await callAs(B, 'approveReport', { reportId: transactionFailureReport.id, action: 'approve' });
+  transactionFailAfterWrites = null;
+  assert(!transactionFailureApproval.success && transactionFailureApproval.code === 'TRANSACTION_FAILED' &&
+    store.reports.find((r) => r._id === transactionFailureReport.id).status === 'pending',
+    '审批事务：真正提交失败返回 success=false 且状态保持 pending');
+
+  const approveCloudSource = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'approveReport', 'index.js'), 'utf8');
+  const detailJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'detail', 'detail.js'), 'utf8');
+  const detailWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'detail', 'detail.wxml'), 'utf8');
+  assert(approveCloudSource.includes('let committedReport = null') &&
+    !approveCloudSource.includes('txRes.result') &&
+    approveCloudSource.indexOf('[ApproveReport][TRANSACTION_SUCCESS]') < approveCloudSource.indexOf('await notifyCreator') &&
+    approveCloudSource.indexOf('[ApproveReport][NOTIFY_FAILED]') < approveCloudSource.indexOf('[ApproveReport][RETURN_SUCCESS]'),
+    '审批服务端：事务快照、通知和成功返回使用独立错误边界');
+  assert(detailJs.includes("name: 'getReportDetail'") && detailJs.includes('async reconcileApproval(action)') &&
+    detailJs.includes("report.status === targetStatus") && detailJs.includes("decision: 'conflict'") &&
+    detailJs.includes("report.status === 'pending'") && detailJs.includes('审批状态未确认，请稍后刷新'),
+    '审批前端：异常响应按目标状态对账，并区分成功、冲突和无法确认');
+  assert((/reconcileApproval\(action\)[\s\S]*name: 'approveReport'/).test(detailJs) === false &&
+    (detailJs.match(/name: 'approveReport'/g) || []).length === 1,
+    '审批前端：对账只读取详情，不重复调用 approveReport');
+  assert(detailJs.includes('if (this.data.approving || !this.data.canApprove) return;') &&
+    detailWxml.includes('disabled="{{approving}}"') && detailJs.includes('canApprove: false'),
+    '审批按钮：提交及对账期间锁定，确认非 pending 后不可再次提交');
 
   // 再走一条批准流程
   const r2 = await callAs(B, 'createReport', { location: '公司团建', returnTime: '20:00', reason: '聚餐' });

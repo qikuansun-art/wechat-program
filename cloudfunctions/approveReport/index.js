@@ -90,18 +90,24 @@ exports.main = async (event, context) => {
     return { success: false, msg: '请填写驳回理由' };
   }
 
+  const users = db.collection('users');
+  let me;
   try {
-    const users = db.collection('users');
-
     const meRes = await users.where({ openid: OPENID }).get();
     if (meRes.data.length === 0) {
       return { success: false, msg: '请先登录' };
     }
-    const me = meRes.data[0];
+    me = meRes.data[0];
+  } catch (err) {
+    console.error('[ApproveReport][FUNCTION_ERROR]', { stage: 'auth', message: err && (err.errMsg || err.message) || '未知错误' });
+    return { success: false, code: 'AUTH_FAILED', msg: '操作失败，请重试' };
+  }
 
+  let committedReport = null;
+  try {
     // 在事务中重新读取并更新报备。并发事务发生写冲突时，云数据库会重试；
     // 重试后的请求会读到非 pending 状态，因此最多只有一个请求能够成功。
-    const txRes = await db.runTransaction(async (transaction) => {
+    await db.runTransaction(async (transaction) => {
       const reportRef = transaction.collection('reports').doc(reportId);
       let reportRes;
       try {
@@ -130,20 +136,27 @@ exports.main = async (event, context) => {
         updateData.rejectReason = reason.slice(0, 100);
       }
       await reportRef.update({ data: updateData });
+      committedReport = Object.assign({}, report, updateData);
       return { report };
     });
-
-    const report = txRes.result.report;
-
-    // 事务成功提交后才通知发起方，失败或重复请求不会发送通知。
-    await notifyCreator(report.openid, report, action, reason);
-
-    return { success: true };
+    console.log('[ApproveReport][TRANSACTION_SUCCESS]', { reportId: reportId.slice(-8), status: action === 'approve' ? 'approved' : 'rejected' });
   } catch (err) {
     if (err && err.name === 'BusinessError') {
-      return { success: false, msg: err.message };
+      return { success: false, code: 'ALREADY_PROCESSED', msg: err.message };
     }
-    console.error('[approveReport] 失败', err);
-    return { success: false, msg: '操作失败，请重试' };
+    console.error('[ApproveReport][FUNCTION_ERROR]', { stage: 'transaction', message: err && (err.errMsg || err.message) || '未知错误' });
+    return { success: false, code: 'TRANSACTION_FAILED', msg: '操作失败，请重试' };
   }
+
+  // 到这里审批事务已经提交。通知是 best effort，任何异常都不能改变审批结果。
+  try {
+    const notifyResult = await notifyCreator(committedReport.openid, committedReport, action, reason);
+    console.log(notifyResult.success ? '[ApproveReport][NOTIFY_SUCCESS]' : '[ApproveReport][NOTIFY_FAILED]', { reportId: reportId.slice(-8) });
+  } catch (err) {
+    console.error('[ApproveReport][NOTIFY_FAILED]', { reportId: reportId.slice(-8), message: err && (err.errMsg || err.message) || '未知错误' });
+  }
+
+  const status = action === 'approve' ? 'approved' : 'rejected';
+  console.log('[ApproveReport][RETURN_SUCCESS]', { reportId: reportId.slice(-8), status });
+  return { success: true, status };
 };

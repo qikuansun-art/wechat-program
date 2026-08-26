@@ -66,8 +66,8 @@
 
   <!-- 审批操作栏 -->
   <view class="approve-bar" wx:if="{{canApprove}}">
-    <button class="approve-btn reject" bindtap="onReject">驳回</button>
-    <button class="approve-btn pass" bindtap="onApprove">批准</button>
+    <button class="approve-btn reject" disabled="{{approving}}" bindtap="onReject">驳回</button>
+    <button class="approve-btn pass" disabled="{{approving}}" bindtap="onApprove">批准</button>
   </view>
 
   <view class="page-bottom" wx:if="{{canApprove}}"></view>
