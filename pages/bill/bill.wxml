@@ -62,36 +62,15 @@
     <view class="stat-error" wx:if="{{statsError}}">月度汇总暂时加载失败</view>
   </view>
 
-  <!-- 统计维度切换（月/分类/人员） -->
-  <view class="dims" wx:if="{{!notBound}}">
-    <view class="dim-tab {{dim === 'month' ? 'active' : ''}}" bindtap="onDimChange" data-dim="month">按月</view>
-    <view class="dim-tab {{dim === 'category' ? 'active' : ''}}" bindtap="onDimChange" data-dim="category">按分类</view>
-    <view class="dim-tab {{dim === 'person' ? 'active' : ''}}" bindtap="onDimChange" data-dim="person">按人员</view>
-  </view>
-
-  <!-- 统计明细（按维度） -->
-  <view class="dim-panel" wx:if="{{dim !== 'month' && !notBound}}">
-    <view class="dim-row" wx:for="{{dimList}}" wx:key="key">
-      <view class="dim-name-wrap">
-        <text class="dim-name">{{item.name}}</text>
-        <text class="dim-budget" wx:if="{{item.hasBudget}}">已支出 ¥{{item.amountText}} · 预算 ¥{{item.budgetText}} · {{item.budgetResultLabel}} ¥{{item.budgetResultText}}</text>
-        <text class="dim-budget" wx:elif="{{item.sub}}">{{item.sub}}</text>
-      </view>
-      <view class="dim-track">
-        <view class="dim-fill" style="width: {{item.percent}}%"></view>
-      </view>
-      <text class="dim-percent">{{item.percent}}%</text>
-      <text class="dim-amount">¥{{item.amountText}}</text>
-    </view>
-  </view>
-
-  <!-- 筛选条 -->
+  <!-- 组合筛选：类型、人员、分类三项相互独立 -->
   <view class="filter-bar" wx:if="{{!notBound}}">
     <view class="filter-chip {{filterType === 'all' ? 'active' : ''}}" bindtap="onFilterType" data-type="all">全部</view>
     <view class="filter-chip {{filterType === 'expense' ? 'active' : ''}}" bindtap="onFilterType" data-type="expense">支出</view>
     <view class="filter-chip {{filterType === 'income' ? 'active' : ''}}" bindtap="onFilterType" data-type="income">收入</view>
     <view class="filter-chip {{filterPerson !== 'all' ? 'active' : ''}}" bindtap="onFilterPerson">人员:{{filterPersonText || '全部'}}</view>
-    <view class="filter-chip {{filterCategory ? 'active' : ''}}" bindtap="onFilterCategory">分类:{{filterCategoryText || '全部'}}</view>
+    <picker mode="selector" range="{{filterCategoryOptions}}" range-key="name" bindchange="onFilterCategoryChange">
+      <view class="filter-chip {{filterCategory ? 'active' : ''}}">分类:{{filterCategoryText || '全部'}}</view>
+    </picker>
   </view>
 
   <view class="list-error" wx:if="{{listError && filteredList.length === 0}}" bindtap="onRetryList">账单列表加载失败，点击重试</view>

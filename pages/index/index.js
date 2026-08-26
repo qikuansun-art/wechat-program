@@ -1,6 +1,7 @@
 // pages/index/index.js —— 首页：滚动 Banner + 功能模块
 const util = require('../../utils/util');
 const config = require('../../utils/config');
+const anniversary = require('../../utils/anniversary');
 
 Page({
   data: {
@@ -21,14 +22,19 @@ Page({
     todayScheduleHasMore: false,
     todayScheduleLoading: false,
     todayScheduleError: false,
-
-    // 最近报备
-    latestReports: [],
+    swipedScheduleKey: '',
 
     // 待审批列表
     pendingReports: [],
     pendingLoading: false,
     pendingError: false,
+
+    // 共享纪念日
+    anniversaryDate: '',
+    anniversaryDateText: '',
+    anniversaryDays: 0,
+    anniversaryLoading: false,
+    anniversaryError: false,
 
     // Banner 当前页
     bannerCurrent: 0,
@@ -46,7 +52,13 @@ Page({
   },
 
   onShow() {
-    if (this._loaded) this.init();
+    if (!this._loaded) return;
+    if (this._anniversaryDirty) {
+      this._anniversaryDirty = false;
+      this.loadCoupleSettings();
+      return;
+    }
+    this.init();
   },
 
   onUnload() {
@@ -97,11 +109,11 @@ Page({
       if (shouldRefreshBanner) this.refreshBannerUrls();
     }
     if (userInfo.partnerId) {
-      // 三个聚合模块互不依赖，并行加载；各自负责失败降级。
+      // 两个聚合模块互不依赖，并行加载；各自负责失败降级。
       Promise.allSettled([
         this.loadTodaySchedules(),
         this.loadPendingReports(),
-        this.loadLatestReports()
+        this.loadCoupleSettings()
       ]);
       // 仅首次加载时兜底引导授权，避免每次 onShow 都弹窗骚扰用户
       if (this._isFirstLoad) {
@@ -111,8 +123,33 @@ Page({
     } else {
       this.setData({
         todaySchedules: [], todayScheduleTotal: 0, todayScheduleHasMore: false, todayScheduleError: false,
-        pendingReports: [], pendingError: false, latestReports: []
+        pendingReports: [], pendingError: false,
+        anniversaryDate: '', anniversaryDateText: '', anniversaryDays: 0, anniversaryError: false
       });
+    }
+  },
+
+  async loadCoupleSettings() {
+    const requestId = (this._anniversaryRequestId || 0) + 1;
+    this._anniversaryRequestId = requestId;
+    this.setData({ anniversaryLoading: true, anniversaryError: false });
+    try {
+      const res = await wx.cloud.callFunction({ name: 'getCoupleSettings', data: {} });
+      if (requestId !== this._anniversaryRequestId) return;
+      const result = res.result || {};
+      if (!result.success) throw new Error(result.msg || '纪念日加载失败');
+      const anniversaryDate = result.settings && result.settings.anniversaryDate || '';
+      this.setData({
+        anniversaryDate,
+        anniversaryDateText: anniversary.dotDate(anniversaryDate),
+        anniversaryDays: anniversaryDate ? anniversary.anniversaryDays(anniversaryDate) : 0,
+        anniversaryLoading: false,
+        anniversaryError: false
+      });
+    } catch (err) {
+      if (requestId !== this._anniversaryRequestId) return;
+      console.error('[Home][ANNIVERSARY_LOAD_FAILED]', err);
+      this.setData({ anniversaryLoading: false, anniversaryError: true });
     }
   },
 
@@ -145,8 +182,8 @@ Page({
         timeText: item.startTime || '全天',
         ownerLabel: item.ownerLabel || '双人',
         ownerClass: item.ownerType === 'personal' ? (item.ownerLabel === '我的' ? 'mine' : 'partner') : 'couple',
-        typeText: item.type === 'todo' ? '待办' : item.type === 'checkin' ? '打卡' : '日程',
         typeClass: item.type || 'schedule',
+        isRecurring: !!item.isRecurring,
         stateText: item.type === 'checkin' ? (item.completed ? '已打卡' : '待打卡') : (item.completed ? '已完成' : '待完成'),
         completed: !!item.completed,
         toggling: false
@@ -156,40 +193,13 @@ Page({
         todayScheduleTotal: list.length,
         todayScheduleHasMore: list.length > 5,
         todayScheduleLoading: false,
-        todayScheduleError: false
+        todayScheduleError: false,
+        swipedScheduleKey: ''
       });
     } catch (err) {
       if (requestId !== this._scheduleRequestId) return;
       console.error('加载今日安排失败', err);
-      this.setData({ todaySchedules: [], todayScheduleTotal: 0, todayScheduleHasMore: false, todayScheduleLoading: false, todayScheduleError: true });
-    }
-  },
-
-  /** 加载最近 2 条自己发起的报备 */
-  async loadLatestReports() {
-    const requestId = (this._latestRequestId || 0) + 1;
-    this._latestRequestId = requestId;
-    try {
-      const res = await wx.cloud.callFunction({
-        name: 'getReports',
-        data: { role: 'creator', limit: 2 }
-      });
-      if (!res.result || !res.result.success) throw new Error((res.result && res.result.msg) || '最近报备加载失败');
-      const list = (res.result && res.result.list) || [];
-      const reports = list.map((report) => ({
-        id: report._id,
-        location: report.location,
-        reason: report.reason,
-        createdAtText: util.prettyTime(report.createdAt),
-        statusText: util.statusText(report.status),
-        statusClass: util.statusClass(report.status)
-      }));
-      if (requestId !== this._latestRequestId) return;
-      this.setData({ latestReports: reports });
-    } catch (err) {
-      if (requestId !== this._latestRequestId) return;
-      console.error('加载最近报备失败', err);
-      this.setData({ latestReports: [] });
+      this.setData({ todaySchedules: [], todayScheduleTotal: 0, todayScheduleHasMore: false, todayScheduleLoading: false, todayScheduleError: true, swipedScheduleKey: '' });
     }
   },
 
@@ -674,24 +684,28 @@ Page({
     wx.navigateTo({ url: `/pages/schedule-edit/schedule-edit?date=${this.shanghaiToday()}` });
   },
 
+  goAnniversaryEdit() {
+    wx.navigateTo({
+      url: '/pages/anniversary-edit/anniversary-edit',
+      success: (res) => res.eventChannel.on('anniversarySaved', () => { this._anniversaryDirty = true; })
+    });
+  },
+
   /** 查看完整日程 */
   goScheduleAll() {
     wx.switchTab({ url: '/pages/schedule/schedule' });
   },
 
-  /** 查看日程规则详情 */
-  goScheduleDetail(e) {
-    const id = e.currentTarget.dataset.id;
-    if (id) wx.navigateTo({ url: '/pages/schedule-edit/schedule-edit?id=' + id });
-  },
-
   /** 首页只切换当前实例，不触发 init 或其他模块请求。 */
-  async onTodayToggle(e) {
+  async onTodayItemTap(e) {
     const instanceKey = e.currentTarget.dataset.instanceKey;
     const scheduleId = e.currentTarget.dataset.scheduleId;
     const occurrenceDate = e.currentTarget.dataset.occurrenceDate;
     const completed = e.currentTarget.dataset.completed === true || e.currentTarget.dataset.completed === 'true';
     if (!instanceKey || !scheduleId || !occurrenceDate) return;
+    if (Date.now() < (this._suppressTodayTapUntil || 0)) return;
+    const openedKey = this.data.swipedScheduleKey;
+    if (openedKey) this.setData({ swipedScheduleKey: '' });
     if (!this._todayTogglingKeys) this._todayTogglingKeys = new Set();
     if (this._todayTogglingKeys.has(instanceKey)) return;
     this._todayTogglingKeys.add(instanceKey);
@@ -722,6 +736,84 @@ Page({
   updateTodayInstance(instanceKey, patch) {
     const todaySchedules = this.data.todaySchedules.map((item) => item.instanceKey === instanceKey ? Object.assign({}, item, patch) : item);
     this.setData({ todaySchedules });
+  },
+
+  onTodayTouchStart(e) {
+    const touch = e.touches && e.touches[0];
+    if (!touch) return;
+    this._todaySwipeInfo = {
+      startX: touch.pageX,
+      startY: touch.pageY,
+      lastX: touch.pageX,
+      lastY: touch.pageY,
+      instanceKey: e.currentTarget.dataset.instanceKey
+    };
+  },
+
+  onTodayTouchMove(e) {
+    const touch = e.touches && e.touches[0];
+    if (!touch || !this._todaySwipeInfo) return;
+    this._todaySwipeInfo.lastX = touch.pageX;
+    this._todaySwipeInfo.lastY = touch.pageY;
+  },
+
+  onTodayTouchEnd(e) {
+    const touch = e.changedTouches && e.changedTouches[0];
+    const info = this._todaySwipeInfo;
+    this._todaySwipeInfo = null;
+    if (!info) return;
+    const endX = touch ? touch.pageX : info.lastX;
+    const endY = touch ? touch.pageY : info.lastY;
+    const deltaX = endX - info.startX;
+    const deltaY = endY - info.startY;
+    if (deltaX <= -50 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      this._suppressTodayTapUntil = Date.now() + 300;
+      this.setData({ swipedScheduleKey: info.instanceKey });
+    } else if (deltaX >= 40 && Math.abs(deltaX) > Math.abs(deltaY)) {
+      this._suppressTodayTapUntil = Date.now() + 300;
+      if (this.data.swipedScheduleKey) this.setData({ swipedScheduleKey: '' });
+    }
+  },
+
+  closeTodaySwipe() {
+    if (this.data.swipedScheduleKey) this.setData({ swipedScheduleKey: '' });
+  },
+
+  onTodayEdit(e) {
+    const id = e.currentTarget.dataset.scheduleId;
+    this.closeTodaySwipe();
+    if (id) wx.navigateTo({ url: '/pages/schedule-edit/schedule-edit?id=' + id });
+  },
+
+  onTodayDelete(e) {
+    const scheduleId = e.currentTarget.dataset.scheduleId;
+    const isRecurring = e.currentTarget.dataset.recurring === true || e.currentTarget.dataset.recurring === 'true';
+    if (!scheduleId) return;
+    wx.showModal({
+      title: '删除日程',
+      content: isRecurring
+        ? '这是重复事项，删除后整个重复事项及其完成记录都会被移除，确定删除吗？'
+        : '确定删除这条事项吗？',
+      confirmColor: '#E65353',
+      success: async (modalRes) => {
+        if (!modalRes.confirm) return;
+        try {
+          const res = await wx.cloud.callFunction({ name: 'deleteSchedule', data: { id: scheduleId } });
+          const result = res.result || {};
+          if (!result.success) throw new Error(result.msg || '删除失败');
+          const todaySchedules = this.data.todaySchedules.filter((item) => item.scheduleId !== scheduleId);
+          this.setData({
+            todaySchedules,
+            todayScheduleTotal: Math.max(0, this.data.todayScheduleTotal - 1),
+            todayScheduleHasMore: this.data.todayScheduleTotal - 1 > todaySchedules.length
+          });
+          util.toast('已删除');
+        } catch (err) {
+          console.error('[index] delete today schedule failed:', err);
+          util.toast((err && err.message) || '删除失败，请重试');
+        }
+      }
+    });
   },
 
   retryTodaySchedules() {

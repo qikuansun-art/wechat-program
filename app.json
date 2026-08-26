@@ -12,6 +12,7 @@
     "pages/apply/apply",
     "pages/schedule/schedule",
     "pages/schedule-edit/schedule-edit",
+    "pages/anniversary-edit/anniversary-edit",
     "pages/banner-crop/banner-crop"
   ],
   "window": {

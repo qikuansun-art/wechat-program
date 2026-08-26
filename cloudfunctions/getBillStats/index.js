@@ -74,10 +74,54 @@ function buildBudget(record, expense, categoryExpense) {
   };
 }
 
+function buildStats(yearMonth, groups, memberIds, usersById) {
+  let expense = 0, income = 0, count = 0;
+  const categoryExpense = {};
+  const peopleMap = {};
+  memberIds.forEach((id) => {
+    const user = usersById[id] || {};
+    peopleMap[id] = { creatorId: id, creatorName: user.nickName || '伴侣', expense: 0, income: 0, count: 0 };
+  });
+  groups.forEach((group) => {
+    const amount = group.totalAmount;
+    const groupCount = group.count;
+    const category = group.category || 'other';
+    const creatorId = group.creatorId;
+    count += groupCount;
+    if (!peopleMap[creatorId]) peopleMap[creatorId] = { creatorId, creatorName: '伴侣', expense: 0, income: 0, count: 0 };
+    peopleMap[creatorId].count += groupCount;
+    if (group.type === 'income') {
+      income += amount;
+      peopleMap[creatorId].income += amount;
+    } else {
+      expense += amount;
+      peopleMap[creatorId].expense += amount;
+      categoryExpense[category] = (categoryExpense[category] || 0) + amount;
+    }
+  });
+  expense = money(expense);
+  income = money(income);
+  const categoryStats = Object.keys(categoryExpense).map((category) => ({
+    category, amount: money(categoryExpense[category]), percent: expense ? Math.round(categoryExpense[category] / expense * 100) : 0
+  })).sort((a, b) => b.amount - a.amount);
+  const peopleStats = Object.values(peopleMap).map((item) => ({
+    creatorId: item.creatorId, creatorName: item.creatorName, expense: money(item.expense),
+    income: money(item.income), count: item.count
+  }));
+  return { yearMonth, expense, income, balance: money(income - expense), count, categoryStats, peopleStats, categoryExpense };
+}
+
 exports.main = async (event = {}) => {
   const { OPENID } = cloud.getWXContext();
   const yearMonth = String(event.yearMonth || '');
   if (!validMonth(yearMonth)) return { success: false, code: 'INVALID_MONTH', msg: '月份参数错误' };
+  const type = event.type === undefined || event.type === '' ? 'all' : String(event.type);
+  const person = event.person === undefined || event.person === '' ? 'all' : String(event.person);
+  const category = event.category === undefined ? '' : String(event.category);
+  const CATEGORY_KEYS = new Set(['food', 'transport', 'shopping', 'fun', 'house', 'medical', 'gift', 'other', 'salary', 'sidejob', 'redpacket', 'invest']);
+  if (!['all', 'expense', 'income'].includes(type)) return { success: false, code: 'INVALID_TYPE', msg: '收支类型不合法' };
+  if (!['all', 'mine', 'partner'].includes(person)) return { success: false, code: 'INVALID_PERSON', msg: '人员筛选不合法' };
+  if (category && !CATEGORY_KEYS.has(category)) return { success: false, code: 'INVALID_CATEGORY', msg: '账单分类不合法' };
   try {
     const auth = await getBoundUsers(OPENID);
     if (auth.error) return auth.error;
@@ -90,13 +134,6 @@ exports.main = async (event = {}) => {
         _id: { type: '$type', category: '$category', creatorId: '$creatorId' },
         totalAmount: $.sum('$amount'), count: $.sum(1)
       }).end();
-    let expense = 0, income = 0, count = 0;
-    const categoryExpense = {};
-    const peopleMap = {};
-    memberIds.forEach((id) => {
-      const user = id === auth.me._id ? auth.me : auth.partner;
-      peopleMap[id] = { creatorId: id, creatorName: user.nickName || '伴侣', expense: 0, income: 0, count: 0 };
-    });
     // CloudBase aggregate().end() 在真实环境返回 list；data 仅用于兼容旧 SDK/测试桩。
     const aggregateList = Array.isArray(aggregateRes.list)
       ? aggregateRes.list
@@ -111,39 +148,27 @@ exports.main = async (event = {}) => {
         count: Math.max(0, Math.trunc(numberValue(firstDefined(group, ['count', 'totalCount']))))
       };
     });
-    parsedGroups.forEach((group) => {
-      const amount = group.totalAmount;
-      const groupCount = group.count;
-      const type = group.type;
-      const category = group.category || 'other';
-      const creatorId = group.creatorId;
-      count += groupCount;
-      if (!peopleMap[creatorId]) peopleMap[creatorId] = { creatorId, creatorName: '伴侣', expense: 0, income: 0, count: 0 };
-      peopleMap[creatorId].count += groupCount;
-      if (type === 'income') {
-        income += amount;
-        peopleMap[creatorId].income += amount;
-      } else {
-        expense += amount;
-        peopleMap[creatorId].expense += amount;
-        categoryExpense[category] = (categoryExpense[category] || 0) + amount;
-      }
-    });
-    expense = money(expense); income = money(income);
-    const categoryStats = Object.keys(categoryExpense).map((category) => ({
-      category, amount: money(categoryExpense[category]), percent: expense ? Math.round(categoryExpense[category] / expense * 100) : 0
-    })).sort((a, b) => b.amount - a.amount);
-    const peopleStats = Object.values(peopleMap).map((item) => ({
-      creatorId: item.creatorId, creatorName: item.creatorName, expense: money(item.expense),
-      income: money(item.income), count: item.count
-    }));
+    const usersById = { [auth.me._id]: auth.me, [auth.partner._id]: auth.partner };
+    const monthStats = buildStats(yearMonth, parsedGroups, memberIds, usersById);
+    const monthCategoryExpense = monthStats.categoryExpense;
+    delete monthStats.categoryExpense;
+    const filteredCreatorIds = person === 'mine' ? [auth.me._id] : person === 'partner' ? [auth.partner._id] : memberIds;
+    const filteredGroups = parsedGroups.filter((group) =>
+      filteredCreatorIds.includes(group.creatorId) &&
+      (type === 'all' || group.type === type) &&
+      (!category || group.category === category)
+    );
+    const filteredStats = buildStats(yearMonth, filteredGroups, filteredCreatorIds, usersById);
+    delete filteredStats.categoryExpense;
     const pair = pairInfo(auth.me, auth.partner);
     const budgetRes = await db.collection('bill_budgets').doc(budgetId(pair.pairKey, yearMonth)).get().catch(() => null);
     const record = budgetRes && budgetRes.data && budgetRes.data.pairKey === pair.pairKey && budgetRes.data.month === yearMonth ? budgetRes.data : null;
     return {
       success: true,
-      stats: { yearMonth, expense, income, balance: money(income - expense), count, categoryStats, peopleStats },
-      budget: buildBudget(record, expense, categoryExpense)
+      stats: monthStats,
+      monthStats,
+      filteredStats,
+      budget: buildBudget(record, monthStats.expense, monthCategoryExpense)
     };
   } catch (err) {
     console.error('[getBillStats] 失败', err);

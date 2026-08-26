@@ -1,0 +1,11 @@
+<view class="page anniversary-page">
+  <view class="anniversary-card">
+    <view class="heart-mark">♡</view>
+    <view class="anniversary-title">我们的纪念日</view>
+    <picker mode="date" value="{{anniversaryDate}}" end="{{maxDate}}" bindchange="onDateChange">
+      <view class="date-picker">{{anniversaryDateText}}</view>
+    </picker>
+    <view class="anniversary-tip">这一天将作为我们在一起的第1天</view>
+  </view>
+  <button class="save-button" loading="{{saving}}" disabled="{{loading || saving}}" bindtap="onSave">保存</button>
+</view>

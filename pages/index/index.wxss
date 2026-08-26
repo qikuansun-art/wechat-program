@@ -113,6 +113,18 @@
 .wallet-heart::before { top: -5rpx; }
 .wallet-heart::after { left: 5rpx; }
 
+/* ====== 纪念日展示 ====== */
+.anniversary-display { margin: 20rpx 24rpx 0; padding: 28rpx 30rpx; border-radius: 24rpx; background: linear-gradient(135deg, #FFF3F7, #F2ECFF); box-shadow: 0 6rpx 20rpx rgba(115,79,137,.07); text-align: center; }
+.anniversary-display:active { opacity: .78; }
+.anniversary-kicker { color: #7D6479; font-size: 25rpx; }
+.anniversary-heart { margin-right: 8rpx; color: #FF6B81; font-size: 31rpx; }
+.anniversary-days { margin-top: 8rpx; color: #332D36; line-height: 1.1; }
+.anniversary-days-number { font-size: 58rpx; font-weight: 750; }
+.anniversary-days-unit { margin-left: 8rpx; font-size: 25rpx; font-weight: 500; }
+.anniversary-date { margin-top: 9rpx; color: #9A8798; font-size: 22rpx; }
+.anniversary-empty { min-height: 48rpx; display: flex; align-items: center; justify-content: center; color: #735E70; font-size: 26rpx; }
+.anniversary-arrow { margin-left: auto; color: #B5A5B4; font-size: 34rpx; }
+
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 18rpx; }
 .section-heading { display: flex; align-items: center; gap: 12rpx; }
 .section-count { color: #9AA0A6; font-size: 22rpx; font-weight: 400; }
@@ -121,9 +133,16 @@
 .module-state.error { color: #C27B31; }
 .inline-action { margin-left: 16rpx; }
 .today-list { display: flex; flex-direction: column; }
-.today-item { min-height: 94rpx; display: flex; align-items: center; gap: 10rpx; border-bottom: 1rpx solid #F1F2F4; }
-.today-item:last-of-type { border-bottom: none; }
-.owner-tag, .type-tag { flex-shrink: 0; padding: 4rpx 10rpx; border-radius: 12rpx; font-size: 19rpx; }
+.today-swipe { position: relative; overflow: hidden; border-bottom: 1rpx solid #F1F2F4; }
+.today-swipe:last-of-type { border-bottom: none; }
+.today-actions { position: absolute; top: 0; right: 0; bottom: 0; display: flex; }
+.today-action { width: 112rpx; display: flex; align-items: center; justify-content: center; color: #fff; font-size: 24rpx; }
+.today-action.edit { background: #8068C7; }
+.today-action.delete { background: #E65353; }
+.today-item { position: relative; z-index: 1; min-height: 94rpx; display: flex; align-items: center; gap: 10rpx; background: #fff; transition: transform .2s ease; }
+.today-item.swiped { transform: translateX(-224rpx); }
+.today-item.loading .today-main { opacity: .55; }
+.owner-tag { flex-shrink: 0; padding: 4rpx 10rpx; border-radius: 12rpx; font-size: 19rpx; }
 .owner-tag { color: #AD4860; background: #FFF0F4; }
 .owner-tag.mine { color: #376DAE; background: #EDF5FF; }
 .owner-tag.partner { color: #7655A8; background: #F4EFFF; }
@@ -132,20 +151,6 @@
 .today-title { overflow: hidden; color: #25282D; font-size: 26rpx; text-overflow: ellipsis; white-space: nowrap; }
 .today-state { margin-top: 3rpx; color: #A6ABB2; font-size: 19rpx; }
 .today-state.completed { color: #52A675; }
-.type-tag { color: #FF607A; background: #FFF0F2; }
-.type-tag.todo { color: #A46A18; background: #FFF7E8; }
-.type-tag.checkin { color: #3D72C8; background: #EDF4FF; }
-.today-toggle { width: 72rpx; height: 72rpx; flex-shrink: 0; display: flex; align-items: center; justify-content: center; border-radius: 50%; }
-.today-toggle.loading { opacity: .42; }
-.today-schedule-icon { position: relative; width: 52rpx; height: 46rpx; box-sizing: border-box; border: 4rpx solid #FF7188; border-radius: 11rpx; }
-.today-calendar-line { position: absolute; left: 7rpx; right: 7rpx; top: 12rpx; height: 3rpx; border-radius: 2rpx; background: #FF9CAD; }
-.today-todo-icon { position: relative; width: 46rpx; height: 46rpx; box-sizing: border-box; border: 4rpx solid #D99B38; border-radius: 10rpx; }
-.today-checkin-icon { position: relative; width: 48rpx; height: 48rpx; box-sizing: border-box; border: 4rpx solid #5B8FF9; border-radius: 50%; }
-.today-checkin-dot { position: absolute; left: 50%; top: 50%; width: 9rpx; height: 9rpx; border-radius: 50%; background: #5B8FF9; transform: translate(-50%, -50%); }
-.today-checkmark { display: none; position: absolute; left: 14rpx; top: 6rpx; width: 10rpx; height: 21rpx; box-sizing: border-box; border-right: 4rpx solid #fff; border-bottom: 4rpx solid #fff; transform: rotate(45deg); }
-.today-toggle.schedule.checked .today-schedule-icon, .today-toggle.todo.checked .today-todo-icon, .today-toggle.checkin.checked .today-checkin-icon { border-color: #52B788; background: #52B788; }
-.today-toggle.checked .today-checkmark { display: block; }
-.today-toggle.schedule.checked .today-calendar-line, .today-toggle.checkin.checked .today-checkin-dot { display: none; }
 .more-row { padding-top: 18rpx; text-align: center; }
 .bind-card { display: flex; align-items: center; justify-content: space-between; }
 .bind-title { color: #616871; font-size: 25rpx; }
@@ -168,39 +173,6 @@
   font-size: 24rpx;
   color: #FF6B81;
   flex: 1;
-}
-
-/* ====== 最近报备 ====== */
-.section-title {
-  font-size: 30rpx;
-  font-weight: 600;
-  color: #1F2329;
-  margin-bottom: 20rpx;
-}
-.report-mini {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.report-mini:active {
-  opacity: 0.7;
-}
-.report-mini-left {
-  flex: 1;
-  min-width: 0;
-}
-.report-mini-location {
-  font-size: 28rpx;
-  font-weight: 500;
-  color: #1F2329;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.report-mini-time {
-  font-size: 24rpx;
-  color: #9AA0A6;
-  margin-top: 6rpx;
 }
 
 /* ====== 待审批列表 ====== */

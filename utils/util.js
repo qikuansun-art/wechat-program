@@ -22,6 +22,10 @@ function pad(n) {
   return n < 10 ? '0' + n : '' + n;
 }
 
+function daysInMonth(year, month) {
+  return new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+}
+
 /** Date → 'YYYY-MM-DD HH:mm' */
 function formatDateTime(date) {
   if (!date) return '';
@@ -41,6 +45,23 @@ function formatDate(date) {
 /** 今天日期字符串 'YYYY-MM-DD'，给 picker 默认值用 */
 function today() {
   return formatDate(new Date());
+}
+
+/** YYYY-MM-DD → 周一…周日；用 UTC 避免设备时区解析偏移。 */
+function weekdayText(dateString) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateString || ''));
+  if (!match) return '';
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  if (date.getUTCFullYear() !== year || date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day) return '';
+  return ['周日', '周一', '周二', '周三', '周四', '周五', '周六'][date.getUTCDay()];
+}
+
+function formatDateWithWeek(dateString) {
+  const week = weekdayText(dateString);
+  return week ? `${dateString} ${week}` : String(dateString || '');
 }
 
 /** 当前时间字符串 'HH:mm'，给 picker 默认值用 */
@@ -93,12 +114,16 @@ function toast(msg) {
 
 module.exports = {
   STATUS,
+  pad,
+  daysInMonth,
   statusText,
   statusClass,
   formatDateTime,
   formatDate,
   prettyTime,
   today,
+  weekdayText,
+  formatDateWithWeek,
   nowTime,
   monthOf,
   monthText,

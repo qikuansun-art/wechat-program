@@ -1,0 +1,9 @@
+.anniversary-page { padding: 56rpx 32rpx calc(48rpx + env(safe-area-inset-bottom)); box-sizing: border-box; }
+.anniversary-card { padding: 54rpx 32rpx 48rpx; border-radius: 28rpx; background: linear-gradient(145deg, #FFF7FA, #F3EEFF); text-align: center; box-shadow: 0 10rpx 30rpx rgba(116, 82, 137, .08); }
+.heart-mark { color: #FF7189; font-size: 66rpx; line-height: 1; }
+.anniversary-title { margin-top: 12rpx; color: #3B3540; font-size: 32rpx; font-weight: 650; }
+.date-picker { margin: 40rpx auto 0; padding: 24rpx 20rpx; border: 2rpx solid #FFD9E1; border-radius: 20rpx; background: rgba(255,255,255,.82); color: #FF607A; font-size: 38rpx; font-weight: 650; }
+.anniversary-tip { margin-top: 24rpx; color: #9B929D; font-size: 24rpx; }
+.save-button { margin-top: 48rpx; height: 92rpx; line-height: 92rpx; border: none; border-radius: 46rpx; background: linear-gradient(135deg, #FF6B81, #FF8EA0); color: #fff; font-size: 30rpx; font-weight: 600; box-shadow: 0 10rpx 22rpx rgba(255,107,129,.22); }
+.save-button::after { border: none; }
+.save-button[disabled] { opacity: .55; }

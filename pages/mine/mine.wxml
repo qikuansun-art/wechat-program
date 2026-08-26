@@ -45,6 +45,10 @@
           <text class="bind-label">绑定时间</text>
           <text class="bind-value">{{bindTimeText || '--'}}</text>
         </view>
+        <view class="bind-line anniversary-setting" bindtap="goAnniversaryEdit">
+          <text class="bind-label">纪念日</text>
+          <view class="setting-value"><text>{{anniversaryLoading ? '加载中...' : (anniversaryError ? '加载失败' : anniversaryText)}}</text><text class="setting-arrow">›</text></view>
+        </view>
       </view>
       <view class="bind-actions">
         <button class="btn-danger bind-btn" bindtap="onUnbind">解绑</button>

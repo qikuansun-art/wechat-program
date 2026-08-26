@@ -54,6 +54,16 @@
     </view>
   </view>
 
+  <!-- ====== 纪念日展示 ====== -->
+  <view class="anniversary-display" wx:if="{{bound && !anniversaryLoading && !anniversaryError}}" bindtap="goAnniversaryEdit">
+    <block wx:if="{{anniversaryDate}}">
+      <view class="anniversary-kicker"><text class="anniversary-heart">♡</text> 我们在一起</view>
+      <view class="anniversary-days"><text class="anniversary-days-number">{{anniversaryDays}}</text><text class="anniversary-days-unit">天</text></view>
+      <view class="anniversary-date">纪念日：{{anniversaryDateText}}</view>
+    </block>
+    <view class="anniversary-empty" wx:else><text class="anniversary-heart">♡</text><text>设置我们的纪念日</text><text class="anniversary-arrow">›</text></view>
+  </view>
+
   <!-- ====== 快速入口 ====== -->
   <view class="home-card quick-card">
     <view class="home-card-title">快速入口</view>
@@ -82,11 +92,6 @@
     </view>
   </view>
 
-  <view class="home-card bind-card" wx:if="{{!bound && !loading}}" bindtap="goBind">
-    <text class="bind-title">绑定伴侣后查看共同安排</text>
-    <text class="bind-action">去绑定 ›</text>
-  </view>
-
   <!-- ====== 今日安排 ====== -->
   <view class="home-card today-card" wx:if="{{bound}}">
     <view class="section-header">
@@ -98,21 +103,22 @@
     <view class="module-state" wx:elif="{{todaySchedules.length === 0}}">
       <text>今天还没有安排</text><text class="inline-action" bindtap="goScheduleCreate">新建日程</text>
     </view>
-    <view class="today-list" wx:else>
-      <view class="today-item" wx:for="{{todaySchedules}}" wx:key="instanceKey" bindtap="goScheduleDetail" data-id="{{item.id}}">
-        <text class="owner-tag {{item.ownerClass}}">{{item.ownerLabel}}</text>
-        <text class="today-time">{{item.timeText}}</text>
-        <view class="today-main">
-          <text class="today-title">{{item.title}}</text>
-          <text class="today-state {{item.completed ? 'completed' : ''}}" wx:if="{{item.stateText}}">{{item.stateText}}</text>
+    <view class="today-list" wx:else bindtap="closeTodaySwipe">
+      <view class="today-swipe" wx:for="{{todaySchedules}}" wx:key="instanceKey">
+        <view class="today-actions">
+          <view class="today-action edit" catchtap="onTodayEdit" data-schedule-id="{{item.scheduleId}}">编辑</view>
+          <view class="today-action delete" catchtap="onTodayDelete" data-schedule-id="{{item.scheduleId}}" data-recurring="{{item.isRecurring}}">删除</view>
         </view>
-        <text class="type-tag {{item.typeClass}}">{{item.typeText}}</text>
-        <view class="today-toggle {{item.typeClass}} {{item.completed ? 'checked' : ''}} {{item.toggling ? 'loading' : ''}}"
+        <view class="today-item {{swipedScheduleKey === item.instanceKey ? 'swiped' : ''}} {{item.toggling ? 'loading' : ''}}"
+          bindtouchstart="onTodayTouchStart" bindtouchmove="onTodayTouchMove" bindtouchend="onTodayTouchEnd"
           data-instance-key="{{item.instanceKey}}" data-schedule-id="{{item.scheduleId}}" data-occurrence-date="{{item.occurrenceDate}}"
-          data-completed="{{item.completed}}" catchtap="onTodayToggle">
-          <view class="today-schedule-icon" wx:if="{{item.typeClass === 'schedule'}}"><view class="today-calendar-line"></view><view class="today-checkmark"></view></view>
-          <view class="today-todo-icon" wx:elif="{{item.typeClass === 'todo'}}"><view class="today-checkmark"></view></view>
-          <view class="today-checkin-icon" wx:else><view class="today-checkin-dot"></view><view class="today-checkmark"></view></view>
+          data-completed="{{item.completed}}" catchtap="onTodayItemTap">
+          <text class="owner-tag {{item.ownerClass}}">{{item.ownerLabel}}</text>
+          <text class="today-time">{{item.timeText}}</text>
+          <view class="today-main">
+            <text class="today-title">{{item.title}}</text>
+            <text class="today-state {{item.completed ? 'completed' : ''}}" wx:if="{{item.stateText}}">{{item.stateText}}</text>
+          </view>
         </view>
       </view>
       <view class="more-row" wx:if="{{todayScheduleHasMore}}" bindtap="goScheduleAll">查看全部 ›</view>
@@ -120,13 +126,11 @@
   </view>
 
   <!-- ====== 待审批列表 ====== -->
-  <view class="home-card pending-card" wx:if="{{bound}}">
+  <view class="home-card pending-card" wx:if="{{bound && (pendingReports.length > 0 || pendingError)}}">
     <view class="section-header">
       <view class="section-heading"><text>待审批报备</text><text class="pending-count" wx:if="{{pendingReports.length}}">{{pendingReports.length}}</text></view>
     </view>
-    <view class="module-state" wx:if="{{pendingLoading && pendingReports.length === 0}}">正在加载...</view>
-    <view class="module-state error" wx:elif="{{pendingError}}" bindtap="retryPendingReports">待审批暂时加载失败 · 点击重试</view>
-    <view class="module-state" wx:elif="{{pendingReports.length === 0}}">暂无待审批报备</view>
+    <view class="module-state error" wx:if="{{pendingError}}" bindtap="retryPendingReports">待审批暂时加载失败 · 点击重试</view>
     <view class="pending-list">
       <view class="pending-item" wx:for="{{pendingReports}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}">
         <view class="pending-left">
@@ -141,20 +145,10 @@
     </view>
   </view>
 
-  <!-- ====== 最近报备 ====== -->
-  <view class="home-card pending-card" wx:if="{{bound && latestReports.length > 0}}">
-    <view class="section-header"><view class="section-heading">最近报备</view></view>
-    <view class="pending-list">
-      <view class="pending-item" wx:for="{{latestReports}}" wx:key="id" bindtap="goDetail" data-id="{{item.id}}">
-        <view class="pending-left">
-          <view class="pending-location">{{item.reason || '未填写事由'}}</view>
-          <view class="pending-meta">
-            <text class="pending-time">{{item.createdAtText}}</text>
-          </view>
-        </view>
-        <view class="status-tag {{item.statusClass}}">{{item.statusText}}</view>
-      </view>
-    </view>
+  <!-- ====== 绑定状态提示（页面业务内容最底部） ====== -->
+  <view class="home-card bind-card" wx:if="{{!bound && !loading}}" bindtap="goBind">
+    <text class="bind-title">绑定伴侣后查看共同安排</text>
+    <text class="bind-action">去绑定 ›</text>
   </view>
 
   <!-- ====== 已绑定状态条（业务内容底部） ====== -->

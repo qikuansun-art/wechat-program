@@ -152,6 +152,9 @@
   font-size: 28rpx;
   font-weight: 500;
 }
+.anniversary-setting { min-height: 52rpx; align-items: center; }
+.setting-value { display: flex; align-items: center; color: #1F2329; font-size: 28rpx; font-weight: 500; }
+.setting-arrow { margin-left: 14rpx; color: #B8BEC6; font-size: 36rpx; font-weight: 400; }
 .bind-actions {
   display: flex;
   gap: 24rpx;

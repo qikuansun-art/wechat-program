@@ -29,9 +29,6 @@ Page({
       balance: 0, balanceText: '0.00',
       count: 0, catList: []
     },
-    // 维度
-    dim: 'month',          // month | category | person
-    dimList: [],           // 统计明细
     // 筛选
     filterOn: false,
     filterType: 'all',     // all | expense | income
@@ -39,6 +36,7 @@ Page({
     filterPersonText: '',
     filterCategory: '',
     filterCategoryText: '',
+    filterCategoryOptions: [],
     // 数据
     filteredList: [],
     page: 0,
@@ -66,8 +64,10 @@ Page({
       catIconMap[c.key] = c.icon;
       catNameMap[c.key] = c.name;
     });
-    this._filterCategories = Object.keys(catNameMap).map((key) => ({ key, name: catNameMap[key] }));
-    this.setData({ catIconMap, catNameMap });
+    this._expenseFilterCategories = billCategories.EXPENSE_CATEGORIES.map((item) => ({ key: item.key, name: item.name }));
+    this._incomeFilterCategories = billCategories.INCOME_CATEGORIES.map((item) => ({ key: item.key, name: item.name }));
+    this._allFilterCategories = Object.keys(catNameMap).map((key) => ({ key, name: catNameMap[key] }));
+    this.setData({ catIconMap, catNameMap, filterCategoryOptions: this.buildCategoryOptions('all') });
 
     const now = new Date();
     this.setData({
@@ -116,7 +116,7 @@ Page({
     this._billStats = null;
     this.setData({
       filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false,
-      statsLoading: true, listError: false, statsError: false, swipedId: '', budget: null, dimList: [],
+      statsLoading: true, listError: false, statsError: false, swipedId: '', budget: null,
       stats: { expense: 0, expenseText: '0.00', income: 0, incomeText: '0.00', balance: 0, balanceText: '0.00', count: 0, categoryStats: [], peopleStats: [] }
     });
     await Promise.allSettled([
@@ -194,14 +194,18 @@ Page({
 
   async loadBillStats(version) {
     const requestId = ++this._billStatsRequestId;
+    const { yearMonth, filterType, filterPerson, filterCategory } = this.data;
     this.setData({ statsLoading: true, statsError: false });
     try {
-      const res = await wx.cloud.callFunction({ name: 'getBillStats', data: { yearMonth: this.data.yearMonth } });
+      const res = await wx.cloud.callFunction({
+        name: 'getBillStats',
+        data: { yearMonth, type: filterType, person: filterPerson, category: filterCategory }
+      });
       if (requestId !== this._billStatsRequestId || version !== this._billViewVersion) return;
       const result = res.result || {};
       if (!result.success) throw new Error(result.msg || 'getBillStats failed');
-      const raw = result.stats || {};
-      this._billStats = raw;
+      const raw = result.filteredStats || result.stats || {};
+      this._billStats = result.monthStats || result.stats || {};
       const stats = {
         expense: Number(raw.expense) || 0, expenseText: formatMoney(raw.expense),
         income: Number(raw.income) || 0, incomeText: formatMoney(raw.income),
@@ -210,7 +214,7 @@ Page({
         categoryStats: raw.categoryStats || [], peopleStats: raw.peopleStats || []
       };
       const budget = this.formatBudget(result.budget);
-      this.setData({ stats, budget, dimList: this.buildDimList(this.data.dim, raw, result.budget), statsLoading: false, statsError: false, notBound: false });
+      this.setData({ stats, budget, statsLoading: false, statsError: false, notBound: false });
     } catch (err) {
       if (requestId !== this._billStatsRequestId || version !== this._billViewVersion) return;
       console.error('加载账单统计失败', err);
@@ -225,41 +229,6 @@ Page({
       resultText: formatMoney(budget.status === 'overspent' ? budget.overspentAmount : budget.availableAmount),
       resultLabel: budget.status === 'overspent' ? '已超支' : '可用额度'
     });
-  },
-
-  buildDimList(dim, stats, budget) {
-    if (!stats) return [];
-    if (dim === 'category') {
-      const usage = (budget && budget.categoryUsage) || {};
-      return (stats.categoryStats || []).map((item) => {
-        const key = item.category || item.key;
-        const budgetItem = Object.prototype.hasOwnProperty.call(usage, key) ? usage[key] : null;
-        return {
-          key, name: `${this.data.catIconMap[key] || ''} ${item.name || this.data.catNameMap[key] || '其他'}`,
-          amountText: formatMoney(item.amount), percent: Number(item.percent) || 0,
-          hasBudget: !!budgetItem,
-          budgetText: budgetItem ? formatMoney(budgetItem.budget) : '',
-          budgetResultLabel: budgetItem && budgetItem.status === 'overspent' ? '已超支' : '可用',
-          budgetResultText: budgetItem ? formatMoney(budgetItem.status === 'overspent' ? budgetItem.overspentAmount : budgetItem.availableAmount) : ''
-        };
-      });
-    }
-    if (dim === 'person') {
-      const totalExpense = Number(stats.expense) || 0;
-      return (stats.peopleStats || []).map((item) => ({
-        key: item.creatorId || item.key, name: item.name || item.creatorName || '成员',
-        amountText: formatMoney(item.expense), percent: totalExpense ? Math.round(Number(item.expense || 0) / totalExpense * 100) : 0,
-        sub: `支出 ${formatMoney(item.expense)} · 收入 +${formatMoney(item.income)} · ${Number(item.count) || 0}笔`
-      }));
-    }
-    return [];
-  },
-
-  /** 切换维度 */
-  onDimChange(e) {
-    const dim = e.currentTarget.dataset.dim;
-    if (dim === this.data.dim) return;
-    this.setData({ dim, dimList: this.buildDimList(dim, this._billStats, this.data.budget) });
   },
 
   /** 上一个月 */
@@ -280,7 +249,16 @@ Page({
   /** 筛选：收支类型 */
   onFilterType(e) {
     const type = e.currentTarget.dataset.type;
-    this.setData({ filterType: type, filterOn: type !== 'all' || this.data.filterPerson !== 'all' || !!this.data.filterCategory });
+    if (type === this.data.filterType) return;
+    const categories = this.getFilterCategories(type);
+    const categoryValid = !this.data.filterCategory || categories.some((item) => item.key === this.data.filterCategory);
+    this.setData({
+      filterType: type,
+      filterCategory: categoryValid ? this.data.filterCategory : '',
+      filterCategoryText: categoryValid ? this.data.filterCategoryText : '',
+      filterCategoryOptions: this.buildCategoryOptions(type),
+      filterOn: type !== 'all' || this.data.filterPerson !== 'all' || (categoryValid && !!this.data.filterCategory)
+    });
     this.reloadFilteredList();
   },
 
@@ -300,20 +278,34 @@ Page({
     });
   },
 
-  onFilterCategory() {
-    const items = ['全部分类'].concat(this._filterCategories.map((item) => item.name));
-    wx.showActionSheet({ itemList: items, success: (res) => {
-      const selected = res.tapIndex === 0 ? null : this._filterCategories[res.tapIndex - 1];
-      this.setData({ filterCategory: selected ? selected.key : '', filterCategoryText: selected ? selected.name : '', filterOn: !!selected || this.data.filterType !== 'all' || this.data.filterPerson !== 'all' });
-      this.reloadFilteredList();
-    } });
+  onFilterCategoryChange(e) {
+    const selected = this.data.filterCategoryOptions[Number(e.detail.value)] || this.data.filterCategoryOptions[0];
+    this.setData({
+      filterCategory: selected.key,
+      filterCategoryText: selected.key ? selected.name : '',
+      filterOn: !!selected.key || this.data.filterType !== 'all' || this.data.filterPerson !== 'all'
+    });
+    this.reloadFilteredList();
+  },
+
+  getFilterCategories(type) {
+    if (type === 'expense') return this._expenseFilterCategories;
+    if (type === 'income') return this._incomeFilterCategories;
+    return this._allFilterCategories;
+  },
+
+  buildCategoryOptions(type) {
+    return [{ key: '', name: '全部' }].concat(this.getFilterCategories(type));
   },
 
   reloadFilteredList() {
     ++this._billListRequestId;
     this._loadingMore = false;
     this.setData({ filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false, swipedId: '' });
-    this.loadBillFirstPage(this._billViewVersion);
+    Promise.allSettled([
+      this.loadBillFirstPage(this._billViewVersion),
+      this.loadBillStats(this._billViewVersion)
+    ]);
   },
 
   loadMore() {
@@ -486,7 +478,7 @@ Page({
     });
   },
 
-  /** 导出 XLS */
+  /** 导出真实 CSV，并通过聊天发送。 */
   onExport() {
     const that = this;
     wx.showLoading({ title: '生成中...', mask: true });
@@ -500,46 +492,68 @@ Page({
       wx.hideLoading();
       const all = [].concat.apply([], monthLists);
       all.sort((a, b) => (a.billDate < b.billDate ? 1 : -1));
-      // HTML 转义
-      const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-      // 生成 HTML 表格
-      let rows = '<tr><th>日期</th><th>类型</th><th>分类</th><th>金额</th><th>事项</th><th>备注</th><th>记录人</th></tr>';
-      all.forEach((b) => {
-        const t = b.type === 'income' ? '收入' : '支出';
-        rows += `<tr><td>${esc(b.billDate)}</td><td>${esc(t)}</td><td>${esc(b.categoryName)}</td><td>${b.amount}</td><td>${esc(b.matter)}</td><td>${esc(b.note)}</td><td>${esc(b.creatorName)}</td></tr>`;
-      });
-      const xls = '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
-        'xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">' +
-        '<head><meta charset="UTF-8"></head><body><table border="1">' + rows + '</table></body></html>';
+      const csvCell = (value) => `"${String(value === undefined || value === null ? '' : value).replace(/"/g, '""')}"`;
+      const rows = [['日期', '类型', '分类', '金额', '事项', '备注', '记录人']];
+      all.forEach((b) => rows.push([
+        b.billDate, b.type === 'income' ? '收入' : '支出', b.categoryName,
+        b.amount, b.matter, b.note, b.creatorName
+      ]));
+      const csv = '\uFEFF' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n');
       const fs = wx.getFileSystemManager();
-      const tmpPath = `${wx.env.USER_DATA_PATH}/export_tmp.xls`;
+      const fileName = `账单_${months[0]}至${months[months.length - 1]}.csv`;
+      const tmpPath = `${wx.env.USER_DATA_PATH}/${fileName}`;
+      let fileSize = 0;
       try {
-        fs.writeFileSync(tmpPath, xls, 'utf8');
+        fs.writeFileSync(tmpPath, csv, 'utf8');
+        const stat = fs.statSync(tmpPath);
+        if (!stat || !stat.size) throw new Error('导出文件为空');
+        fileSize = stat.size;
       } catch (err) {
-        console.error('写入导出文件失败', err);
-        util.toast('导出失败，请重试');
+        console.error('[BillExport][FILE_WRITE_FAILED]', err);
+        util.toast('文件生成失败，请重试');
         return;
       }
-      // 直接通过聊天发送（不使用 saveFile / openDocument）
-      wx.shareFileMessage({
-        filePath: tmpPath,
-        fileName: `账单导出_${that.data.yearMonth}.xls`,
-        success: () => {
-          util.toast('导出已发送到聊天，可从中保存');
-        },
-        fail: (err) => {
-          console.error('[导出] shareFileMessage 失败:', err);
-          wx.showModal({
-            title: '导出发送失败',
-            content: String(err.errMsg || JSON.stringify(err)),
-            showCancel: false
-          });
+      console.log('[BillExport][FILE_READY]', { filePath: tmpPath, fileName, fileSize });
+      wx.showModal({
+        title: '文件已生成',
+        content: '点击“发送文件”选择微信聊天',
+        confirmText: '发送文件',
+        success: (res) => {
+          if (res.confirm) that.shareExportFile({ filePath: tmpPath, fileName, fileSize });
         }
       });
     }).catch((err) => {
       wx.hideLoading();
-      console.error('导出失败', err);
-      util.toast('导出失败');
+      console.error('[BillExport][DATA_FETCH_FAILED]', err);
+      util.toast('导出失败，请重试');
+    });
+  },
+
+  /** 必须由用户确认点击直接触发，避免 shareFileMessage 丢失 TAP 手势。 */
+  shareExportFile(file) {
+    wx.shareFileMessage({
+      filePath: file.filePath,
+      fileName: file.fileName,
+      success: () => {
+        util.toast('导出已发送到聊天，可从中保存');
+      },
+      fail: (err) => {
+        console.error('[BillExport][SHARE_FAILED]', {
+          errMsg: err && err.errMsg,
+          errCode: err && err.errCode
+        });
+        wx.openDocument({
+          filePath: file.filePath,
+          showMenu: true,
+          fail: (openErr) => {
+            console.error('[BillExport][OPEN_DOCUMENT_FAILED]', {
+              errMsg: openErr && openErr.errMsg,
+              errCode: openErr && openErr.errCode
+            });
+            wx.showModal({ title: '文件已生成', content: '文件已生成，但无法打开，请重试', showCancel: false });
+          }
+        });
+      }
     });
   },
 

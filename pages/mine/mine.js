@@ -1,6 +1,7 @@
 // pages/mine/mine.js —— 我的：个人中心
 // 直接调用 login 云函数获取最新数据，不依赖任何缓存
 const util = require('../../utils/util');
+const anniversary = require('../../utils/anniversary');
 
 Page({
   data: {
@@ -10,11 +11,19 @@ Page({
     partnerName: '',
     bindTimeText: '',
     inviteCode: '',
+    anniversaryText: '未设置',
+    anniversaryLoading: false,
+    anniversaryError: false,
     editNickname: false,
     nicknameDraft: ''
   },
 
   onShow() {
+    if (this._loaded && this._anniversaryDirty) {
+      this._anniversaryDirty = false;
+      this.loadCoupleSettings();
+      return;
+    }
     this.init();
   },
 
@@ -47,6 +56,9 @@ Page({
         bindTimeText: util.prettyTime(userInfo.bindTime),
         inviteCode: userInfo.bindCode || ''
       });
+      this._loaded = true;
+      if (userInfo.partnerId) this.loadCoupleSettings();
+      else this.setData({ anniversaryText: '未设置', anniversaryError: false });
 
       // 如果还是没有邀请码，弹窗提示
       if (!userInfo.bindCode) {
@@ -61,6 +73,31 @@ Page({
         showCancel: false
       });
     }
+  },
+
+  async loadCoupleSettings() {
+    const requestId = (this._anniversaryRequestId || 0) + 1;
+    this._anniversaryRequestId = requestId;
+    this.setData({ anniversaryLoading: true, anniversaryError: false });
+    try {
+      const res = await wx.cloud.callFunction({ name: 'getCoupleSettings', data: {} });
+      if (requestId !== this._anniversaryRequestId) return;
+      const result = res.result || {};
+      if (!result.success) throw new Error(result.msg || '纪念日加载失败');
+      const value = result.settings && result.settings.anniversaryDate || '';
+      this.setData({ anniversaryText: anniversary.dotDate(value) || '未设置', anniversaryLoading: false, anniversaryError: false });
+    } catch (err) {
+      if (requestId !== this._anniversaryRequestId) return;
+      console.error('[Mine][ANNIVERSARY_LOAD_FAILED]', err);
+      this.setData({ anniversaryLoading: false, anniversaryError: true });
+    }
+  },
+
+  goAnniversaryEdit() {
+    wx.navigateTo({
+      url: '/pages/anniversary-edit/anniversary-edit',
+      success: (res) => res.eventChannel.on('anniversarySaved', () => { this._anniversaryDirty = true; })
+    });
   },
 
   async onChooseAvatar(e) {

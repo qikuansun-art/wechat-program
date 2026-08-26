@@ -14,8 +14,14 @@ Page({
     location: '',
     companions: '',
     date: '',
+    dateText: '',
     time: '',
     startDate: '',
+    startDateText: '',
+    startDatePickerRange: [[], [], []],
+    startDatePickerValue: [0, 0, 0],
+    datePickerRange: [[], [], []],
+    datePickerValue: [0, 0, 0],
     startTime: '',
     duration: '',
     reason: '',
@@ -41,14 +47,25 @@ Page({
     const app = getApp();
     const userInfo = await app.ensureLogin();
     if (!userInfo) return;
+    const today = util.today();
+    this._minReportDate = today;
+    this._datePickerYears = this.buildYearValues(today);
+    const startPicker = this.buildDatePicker(today);
+    const endPicker = this.buildDatePicker(today);
     this._loaded = true;
     this.setData({
       userInfo,
       bound: !!userInfo.partnerId,
       partnerName: userInfo.partnerName || '伴侣',
-      date: util.today(),
+      date: today,
+      dateText: util.formatDateWithWeek(today),
+      datePickerRange: endPicker.range,
+      datePickerValue: endPicker.value,
       time: util.nowTime(),
-      startDate: util.today(),
+      startDate: today,
+      startDateText: util.formatDateWithWeek(today),
+      startDatePickerRange: startPicker.range,
+      startDatePickerValue: startPicker.value,
       startTime: util.nowTime()
     });
     // 独立获取邀请码
@@ -87,10 +104,85 @@ Page({
   onLocationInput(e) { this.setData({ location: e.detail.value }); },
   onCompanionsInput(e) { this.setData({ companions: e.detail.value }); },
   onReasonInput(e) { this.setData({ reason: e.detail.value }); },
-  onDateChange(e) { this.setData({ date: e.detail.value }); this.calcDuration(); },
+  onDateChange(e) { this.commitDatePicker('date', e.detail.value); },
   onTimeChange(e) { this.setData({ time: e.detail.value }); this.calcDuration(); },
-  onStartDateChange(e) { this.setData({ startDate: e.detail.value }); this.calcDuration(); },
+  onStartDateChange(e) { this.commitDatePicker('startDate', e.detail.value); },
   onStartTimeChange(e) { this.setData({ startTime: e.detail.value }); this.calcDuration(); },
+
+  buildYearValues(dateString) {
+    const currentYear = Number(String(dateString).slice(0, 4));
+    return Array.from({ length: 6 }, (_, index) => currentYear + index);
+  },
+
+  buildDatePicker(dateString) {
+    const parts = String(dateString || util.today()).split('-').map(Number);
+    const yearIndex = Math.max(0, this._datePickerYears.indexOf(parts[0]));
+    const year = this._datePickerYears[yearIndex];
+    const month = Math.min(12, Math.max(1, parts[1] || 1));
+    const dayCount = util.daysInMonth(year, month);
+    const day = Math.min(dayCount, Math.max(1, parts[2] || 1));
+    return {
+      range: [
+        this._datePickerYears.map((value) => `${value}年`),
+        Array.from({ length: 12 }, (_, index) => `${index + 1}月`),
+        this.buildDayOptions(year, month)
+      ],
+      value: [yearIndex, month - 1, day - 1]
+    };
+  },
+
+  buildDayOptions(year, month) {
+    return Array.from({ length: util.daysInMonth(year, month) }, (_, index) => {
+      const day = index + 1;
+      const date = `${year}-${util.pad(month)}-${util.pad(day)}`;
+      return `${day}日 ${util.weekdayText(date)}`;
+    });
+  },
+
+  onStartDateColumnChange(e) { this.updateDatePickerColumn('startDate', e.detail.column, e.detail.value); },
+  onDateColumnChange(e) { this.updateDatePickerColumn('date', e.detail.column, e.detail.value); },
+
+  updateDatePickerColumn(field, column, index) {
+    const rangeKey = `${field}PickerRange`;
+    const valueKey = `${field}PickerValue`;
+    const range = this.data[rangeKey].map((items) => items.slice());
+    const value = this.data[valueKey].slice();
+    value[column] = Number(index);
+    if (column === 0 || column === 1) {
+      const year = this._datePickerYears[value[0]];
+      const month = value[1] + 1;
+      range[2] = this.buildDayOptions(year, month);
+      value[2] = Math.min(value[2], range[2].length - 1);
+    }
+    this.setData({ [rangeKey]: range, [valueKey]: value });
+  },
+
+  commitDatePicker(field, pickerValue) {
+    const value = pickerValue.map(Number);
+    const year = this._datePickerYears[value[0]];
+    const month = value[1] + 1;
+    const day = Math.min(value[2] + 1, util.daysInMonth(year, month));
+    const date = `${year}-${util.pad(month)}-${util.pad(day)}`;
+    if (date < this._minReportDate) {
+      util.toast('不能选择今天之前的日期');
+      this.resetDatePicker(field);
+      return;
+    }
+    this.setData({
+      [field]: date,
+      [`${field}Text`]: util.formatDateWithWeek(date),
+      [`${field}PickerValue`]: [value[0], value[1], day - 1]
+    });
+    this.calcDuration();
+  },
+
+  onStartDatePickerCancel() { this.resetDatePicker('startDate'); },
+  onDatePickerCancel() { this.resetDatePicker('date'); },
+
+  resetDatePicker(field) {
+    const picker = this.buildDatePicker(this.data[field]);
+    this.setData({ [`${field}PickerRange`]: picker.range, [`${field}PickerValue`]: picker.value });
+  },
 
   /** 自动计算时长（小时） */
   calcDuration() {
@@ -206,8 +298,8 @@ Page({
           success: () => {
             this.setData({
               location: '', companions: '', reason: '', images: [],
-              date: util.today(), time: util.nowTime(),
-              startDate: util.today(), startTime: util.nowTime(), duration: ''
+              date: util.today(), dateText: util.formatDateWithWeek(util.today()), time: util.nowTime(),
+              startDate: util.today(), startDateText: util.formatDateWithWeek(util.today()), startTime: util.nowTime(), duration: ''
             });
             wx.navigateBack();
           }

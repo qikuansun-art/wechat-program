@@ -8,7 +8,7 @@ const fs = require('fs');
 // ============================================================
 // 1. 内存数据库 + mock wx-server-sdk
 // ============================================================
-const store = { users: [], reports: [], bills: [], bill_budgets: [], subscriptions: [], schedules: [], schedule_completions: [] };
+const store = { users: [], reports: [], bills: [], bill_budgets: [], couple_settings: [], subscriptions: [], schedules: [], schedule_completions: [] };
 let autoId = 0;
 const nextId = () => 'id-' + (++autoId);
 let currentOpenid = '';
@@ -352,6 +352,55 @@ function assert(cond, msg) {
   assert(!rebind.success, '已绑定再绑定：被拒绝');
   const bindIJ = await callAs(I, 'bind', { code: loginJ.userInfo.bindCode });
   assert(bindIJ.success, 'I 与 J 建立独立绑定关系，用于日程越权测试');
+
+  // ---------- 情侣纪念日 ----------
+  console.log('\n== 情侣纪念日 ==');
+  const anniversaryUtil = require(path.join(__dirname, '..', 'utils', 'anniversary.js'));
+  const unboundSettings = await callAs(C, 'getCoupleSettings');
+  const unboundSave = await callAs(C, 'saveAnniversary', { anniversaryDate: '2025-08-26' });
+  assert(!unboundSettings.success && unboundSettings.code === 'NOT_BOUND' && !unboundSave.success && unboundSave.code === 'NOT_BOUND',
+    '纪念日：未绑定用户不能读取或保存');
+  const emptySettings = await callAs(A, 'getCoupleSettings');
+  assert(emptySettings.success && emptySettings.settings === null, '纪念日：未设置时返回 settings=null');
+  const invalidAnniversary = await callAs(A, 'saveAnniversary', { anniversaryDate: '2026-02-30' });
+  const futureAnniversary = await callAs(A, 'saveAnniversary', { anniversaryDate: '2999-01-01' });
+  assert(!invalidAnniversary.success && invalidAnniversary.code === 'INVALID_DATE', '纪念日：不存在的日期被拒绝');
+  assert(!futureAnniversary.success && futureAnniversary.code === 'FUTURE_DATE', '纪念日：未来日期被拒绝');
+  const savedByA = await callAs(A, 'saveAnniversary', {
+    anniversaryDate: '2025-08-26', pairKey: 'forged', memberIds: ['foreign'], updatedBy: 'foreign', openid: C
+  });
+  const readByB = await callAs(B, 'getCoupleSettings');
+  const anniversaryRecord = store.couple_settings[0];
+  const anniversaryMemberIds = [usersA._id, usersB._id].sort();
+  const expectedPairKey = anniversaryMemberIds.join('|');
+  const expectedSettingsId = require('crypto').createHash('sha256').update(expectedPairKey).digest('hex');
+  assert(savedByA.success && readByB.success && readByB.settings.anniversaryDate === '2025-08-26',
+    '纪念日：A 设置后 B 读取同一日期');
+  assert(store.couple_settings.length === 1 && anniversaryRecord._id === expectedSettingsId &&
+    anniversaryRecord.pairKey === expectedPairKey && deepEqual(anniversaryRecord.memberIds, anniversaryMemberIds),
+    '纪念日：双方排序生成相同 pairKey，并使用 SHA-256 确定性文档 ID');
+  assert(anniversaryRecord.updatedBy === usersA._id && anniversaryRecord.pairKey !== 'forged' &&
+    !anniversaryRecord.memberIds.includes('foreign'), '纪念日：客户端伪造身份字段无效');
+  const modifiedByB = await callAs(B, 'saveAnniversary', { anniversaryDate: '2024-02-29' });
+  const readModifiedByA = await callAs(A, 'getCoupleSettings');
+  assert(modifiedByB.success && readModifiedByA.settings.anniversaryDate === '2024-02-29' &&
+    store.couple_settings.length === 1 && store.couple_settings[0].updatedBy === usersB._id,
+    '纪念日：B 修改后 A 读取新日期且仍只有一个文档');
+  assert(anniversaryUtil.anniversaryDays('2026-08-26', '2026-08-26') === 1 &&
+    anniversaryUtil.anniversaryDays('2026-08-25', '2026-08-26') === 2,
+    '纪念日天数：当天为第1天、昨天为第2天');
+  assert(anniversaryUtil.anniversaryDays('2026-07-31', '2026-08-01') === 2 &&
+    anniversaryUtil.anniversaryDays('2025-12-31', '2026-01-01') === 2 &&
+    anniversaryUtil.anniversaryDays('2024-02-28', '2024-03-01') === 3,
+    '纪念日天数：跨月、跨年和闰年按自然日正确计算');
+  const originalPartnerOfB = usersB.partnerId;
+  usersB.partnerId = '';
+  const invalidBindingSettings = await callAs(A, 'getCoupleSettings');
+  const invalidBindingAnniversarySave = await callAs(A, 'saveAnniversary', { anniversaryDate: '2025-08-26' });
+  store.users.find((user) => user.openid === B).partnerId = originalPartnerOfB;
+  assert(!invalidBindingSettings.success && invalidBindingSettings.code === 'BINDING_INVALID' &&
+    !invalidBindingAnniversarySave.success && invalidBindingAnniversarySave.code === 'BINDING_INVALID',
+    '纪念日：双向绑定异常时读取和保存均拒绝');
 
   // ---------- 通知安全边界 ----------
   console.log('\n== 通知安全边界 ==');
@@ -887,16 +936,27 @@ function assert(cond, msg) {
   assert(!/name:\s*['"]getSchedules['"][\s\S]{0,160}data:\s*\{\s*year\s*,\s*month/.test(indexJs), '首页今日安排：不查询整月日程');
   assert(indexJs.includes('list.slice(0, 5)') && indexWxml.includes('todayScheduleHasMore') && indexWxml.includes('查看全部 ›'),
     '首页今日安排：最多渲染 5 条，超出后显示查看全部');
-  assert(indexWxml.includes('{{item.ownerLabel}}') && indexWxml.includes('{{item.typeText}}'), '首页今日安排：展示归属和事项类型');
-  assert(indexWxml.includes('bindtap="goScheduleDetail"') && indexJs.includes("'/pages/schedule-edit/schedule-edit?id=' + id"),
-    '首页今日安排：点击使用 scheduleId 进入编辑页');
+  assert(indexWxml.includes('{{item.ownerLabel}}') && !indexWxml.includes('{{item.typeText}}'), '首页今日安排：保留归属并移除重复类型标签');
+  assert(indexWxml.includes('catchtap="onTodayEdit"') && indexJs.includes("'/pages/schedule-edit/schedule-edit?id=' + id"),
+    '首页今日安排：左滑编辑使用 scheduleId 进入现有编辑页');
   assert(indexJs.includes("data: { role: 'approver', status: 'pending', pageSize: 3 }") &&
     indexJs.includes("r.status === 'pending'") && indexJs.includes('.slice(0, 3)'), '首页待审批：服务端限定 approver/pending/3 条并保留客户端防御过滤');
+  assert(!indexJs.includes('loadLatestReports') && !indexJs.includes('latestReports') &&
+    !indexJs.includes("role: 'creator'") && !indexWxml.includes('最近报备'),
+    '首页精简：最近报备请求、状态、方法和模块已完全删除');
+  assert((indexJs.match(/name:\s*'getReports'/g) || []).length === 1,
+    '首页性能：只保留待审批一路 getReports 请求');
+  assert(indexWxml.includes('wx:if="{{bound && (pendingReports.length > 0 || pendingError)}}"') &&
+    !indexWxml.includes('暂无待审批报备'),
+    '首页待审批：成功且 pending=0 时整个模块隐藏，失败时保留轻量重试提示');
   assert(indexWxml.includes('bindtap="goDetail"') && indexJs.includes("'/pages/detail/detail?id=' + id"), '首页待审批：点击进入现有详情页');
   assert(indexJs.includes('todayScheduleError: true') && indexJs.includes('pendingError: true') &&
     indexWxml.includes('今日安排暂时加载失败') && indexWxml.includes('待审批暂时加载失败'), '首页模块失败：今日安排和待审批分别独立降级');
-  assert(indexJs.includes('Promise.allSettled') && indexJs.includes('this.loadTodaySchedules()') && indexJs.includes('this.loadPendingReports()'),
-    '首页性能：独立聚合请求并行加载');
+  assert(indexJs.includes('Promise.allSettled') && indexJs.includes('this.loadTodaySchedules()') &&
+    indexJs.includes('this.loadPendingReports()') && indexJs.includes('this.loadCoupleSettings()'),
+    '首页性能：今日日程、待审批和纪念日独立并行加载');
+  assert(!/Promise\.allSettled\([\s\S]{0,220}loadLatestReports/.test(indexJs),
+    '首页性能：常规聚合仅并行今日日程和待审批');
   assert(indexJs.includes('bannerKey !== this._bannerFileKey') && indexJs.includes('shouldRefreshBanner'), '首页性能：Banner fileID 未变化时复用临时 URL');
   assert(indexJs.includes('now - (this._lastUserRefreshAt || 0) > 30000') && !indexJs.includes("name: 'getBillStats'"),
     '首页性能：登录资料短缓存且移除首页月账单统计请求');
@@ -905,24 +965,100 @@ function assert(cond, msg) {
   assert(!indexWxml.includes('空间') && !indexJs.includes('/pages/space/'), '首页范围：未新增空间入口');
   assert(!/vant|weui|miniprogram_npm/.test(indexJs + indexWxml) && indexWxss.includes('.quick-grid'),
     '首页视觉：不引入第三方 UI，快速入口使用轻量三列布局');
-  assert(indexWxml.includes('catchtap="onTodayToggle"') && indexWxml.includes('data-occurrence-date="{{item.occurrenceDate}}"') &&
+  assert(indexWxml.includes('catchtap="onTodayItemTap"') && indexWxml.includes('data-occurrence-date="{{item.occurrenceDate}}"') &&
     indexJs.includes("name: 'toggleSchedule'") && indexJs.includes('data: { id: scheduleId, occurrenceDate, completed: !completed }'),
-    '首页今日安排：三种事项均可携带 occurrenceDate 直接 toggle 且按钮阻止冒泡');
+    '首页今日安排：整卡点击携带 occurrenceDate 切换完成状态');
   assert(indexJs.includes('updateTodayInstance(instanceKey') && indexJs.includes("this._todayTogglingKeys.has(instanceKey)") &&
-    !/onTodayToggle[\s\S]{0,1800}this\.init\(/.test(indexJs), '首页今日安排：按 instanceKey 局部更新、单项锁定且不触发完整 init');
+    !/onTodayItemTap[\s\S]{0,1800}this\.init\(/.test(indexJs), '首页今日安排：按 instanceKey 局部更新、单项锁定且不触发完整 init');
   assert(indexJs.includes("toggle today schedule failed") && indexJs.includes("util.toast((err && err.message) || '操作失败，请重试')"),
     '首页今日安排：toggle 失败解除单项状态并明确提示');
-  assert(indexWxml.includes('today-schedule-icon') && indexWxml.includes('today-todo-icon') && indexWxml.includes('today-checkin-icon') &&
-    !/[□○✓]/.test(indexWxml), '首页今日安排：三种纯 WXSS 完成图形存在且不使用字符图标');
+  assert(indexWxml.includes("swipedScheduleKey === item.instanceKey ? 'swiped' : ''") && indexWxml.includes('catchtap="onTodayItemTap"') &&
+    !indexWxml.includes('today-toggle'), '首页今日安排：移除右侧完成按钮并由整卡切换完成状态');
   assert(indexWxml.includes('quick-icon-bubble') && indexWxml.includes('calendar-heart') && indexWxml.includes('clipboard-clip') &&
     indexWxml.includes('paper-plane') && indexWxml.includes('wallet-icon') && indexWxml.includes('wallet-coin') && indexWxss.includes('.cute-spark'),
     '首页快速入口：爱心日历、剪贴板纸飞机、钱包硬币均使用统一多层卡通 WXSS 图标');
   assert(!/https?:\/\//.test(indexWxml) && !indexWxml.includes('<image class="quick'), '首页快速入口：未增加网络图片或位图资源');
-  assert(/\.today-toggle\s*\{[^}]*width:\s*72rpx;[^}]*height:\s*72rpx;/s.test(indexWxss) &&
-    /\.today-schedule-icon\s*\{[^}]*width:\s*52rpx;[^}]*height:\s*46rpx;/s.test(indexWxss) &&
-    /\.today-todo-icon\s*\{[^}]*width:\s*46rpx;[^}]*height:\s*46rpx;/s.test(indexWxss) &&
-    /\.today-checkin-icon\s*\{[^}]*width:\s*48rpx;[^}]*height:\s*48rpx;/s.test(indexWxss),
-    '首页今日安排：三种完成图标放大至 46～52rpx，点击区域统一为 72rpx');
+  assert(indexWxml.includes('bindtouchstart="onTodayTouchStart"') && indexWxml.includes('bindtouchmove="onTodayTouchMove"') &&
+    indexWxml.includes('bindtouchend="onTodayTouchEnd"') && indexJs.includes('deltaX <= -50') && indexJs.includes('deltaX >= 40') &&
+    indexJs.includes('Math.abs(deltaX) > Math.abs(deltaY)') && !indexJs.includes('_todayTouchMoved') && !indexJs.includes('_todaySwipeTriggered'),
+    '首页今日安排：touchend 单独按方向和距离决定展开或右滑收起');
+  assert(indexJs.includes('this._suppressTodayTapUntil = Date.now() + 300') &&
+    indexJs.includes('Date.now() < (this._suppressTodayTapUntil || 0)') &&
+    /onTodayItemTap[\s\S]{0,500}if \(openedKey\) this\.setData\(\{ swipedScheduleKey: '' \}\)[\s\S]{0,500}name: 'toggleSchedule'/.test(indexJs) &&
+    !/onTodayItemTap[\s\S]{0,500}swipedScheduleKey:\s*instanceKey/.test(indexJs),
+    '首页今日安排：普通 tap 只清空已有展开项并 toggle，绝不负责展开');
+  assert(indexWxml.includes('catchtap="onTodayEdit"') && indexWxml.includes('catchtap="onTodayDelete"') &&
+    indexJs.includes("name: 'deleteSchedule'") && indexJs.includes('这是重复事项，删除后整个重复事项及其完成记录都会被移除') &&
+    !/onTodayDelete[\s\S]{0,1800}this\.init\(/.test(indexJs),
+    '首页今日安排：编辑/删除阻止冒泡，重复规则明确确认且删除后不整页 init');
+  assert(indexWxss.includes('.today-item.swiped') && indexJs.includes('swipedScheduleKey: info.instanceKey') &&
+    (indexJs.match(/swipedScheduleKey:/g) || []).length >= 2 && !indexJs.includes('swiped: false') && !indexJs.includes('swiped: true'),
+    '首页今日安排：只用一个 swipedScheduleKey 保证一次展开一项');
+  assert(!indexWxml.includes('type-tag') && !indexWxss.includes('.type-tag') && !indexJs.includes('typeText:') &&
+    indexJs.includes("nextCompleted ? '已打卡' : '待打卡'") && indexJs.includes("nextCompleted ? '已完成' : '待完成'"),
+    '首页今日安排：日程/待办/打卡类型胶囊完全删除，状态文案保留');
+  assert(!/\.today-item\.loading\s*\{[^}]*opacity/s.test(indexWxss) &&
+    indexWxss.includes('.today-item.loading .today-main { opacity: .55; }') &&
+    indexWxss.includes('.today-item {') && indexWxss.includes('background: #fff'),
+    '首页今日安排：toggle 加载态不再降低整个前景层透明度，后方操作区不会透出');
+  assert(indexWxml.indexOf('banner-wrap') < indexWxml.indexOf('quick-card') &&
+    indexWxml.indexOf('banner-wrap') < indexWxml.indexOf('anniversary-display') &&
+    indexWxml.indexOf('anniversary-display') < indexWxml.indexOf('quick-card') &&
+    indexWxml.indexOf('quick-card') < indexWxml.indexOf('today-card') &&
+    indexWxml.indexOf('today-card') < indexWxml.indexOf('pending-card') &&
+    indexWxml.indexOf('pending-card') < indexWxml.indexOf('bound-bar'),
+    '首页最终顺序：Banner、纪念日、快速入口、今日安排、待审批、绑定状态');
+  const applyJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'apply', 'apply.js'), 'utf8');
+  const applyWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'apply', 'apply.wxml'), 'utf8');
+  const dateUtil = require(path.join(__dirname, '..', 'utils', 'util.js'));
+  assert(dateUtil.weekdayText('2026-08-24') === '周一' && dateUtil.weekdayText('2026-08-30') === '周日' &&
+    dateUtil.weekdayText('2026-09-01') === '周二' && dateUtil.weekdayText('2027-01-01') === '周五' &&
+    dateUtil.weekdayText('2028-02-29') === '周二',
+    '报备日期：周一至周日、跨月、跨年和闰年星期计算正确');
+  assert(!applyWxml.includes('mode="date"') && (applyWxml.match(/mode="multiSelector"/g) || []).length === 2 &&
+    applyWxml.includes('bindcolumnchange="onStartDateColumnChange"') && applyWxml.includes('bindcolumnchange="onDateColumnChange"'),
+    '报备日期：开始和结束日期均使用原生 multiSelector 联动选择器');
+  assert(applyJs.includes('buildDayOptions(year, month)') && applyJs.includes('util.daysInMonth(year, month)') &&
+    applyJs.includes('`${day}日 ${util.weekdayText(date)}`') && applyJs.includes('value[2] = Math.min(value[2], range[2].length - 1)'),
+    '报备日期：年月变化重建带星期的实际天数，并自动修正越界日');
+  assert(dateUtil.daysInMonth(2026, 2) === 28 && dateUtil.daysInMonth(2028, 2) === 29 &&
+    dateUtil.daysInMonth(2026, 4) === 30 && dateUtil.daysInMonth(2026, 8) === 31,
+    '报备日期：普通年、闰年、30天和31天月份天数正确');
+  assert(applyWxml.includes('{{startDateText ||') && applyWxml.includes('{{dateText ||') &&
+    applyJs.includes('util.formatDateWithWeek(date)') &&
+    applyJs.includes('startTime: `${startDate} ${startTime}`') && applyJs.includes('returnTime: `${date} ${time}`'),
+    '报备日期：页面结果显示星期，提交仍使用原 YYYY-MM-DD 与时间协议');
+  const anniversaryPagePath = 'pages/anniversary-edit/anniversary-edit';
+  const anniversaryEditJs = fs.readFileSync(path.join(__dirname, '..', anniversaryPagePath + '.js'), 'utf8');
+  const anniversaryEditWxml = fs.readFileSync(path.join(__dirname, '..', anniversaryPagePath + '.wxml'), 'utf8');
+  const anniversaryEditWxss = fs.readFileSync(path.join(__dirname, '..', anniversaryPagePath + '.wxss'), 'utf8');
+  const mineJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'mine', 'mine.js'), 'utf8');
+  const mineWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'mine', 'mine.wxml'), 'utf8');
+  assert(appConfig.pages.includes(anniversaryPagePath) && !appConfig.tabBar.list.some((item) => item.pagePath === anniversaryPagePath),
+    '纪念日编辑页：已注册为轻量非 Tab 页面');
+  assert(indexWxml.includes('我们在一起') && indexWxml.includes('{{anniversaryDays}}') &&
+    indexWxml.includes('纪念日：{{anniversaryDateText}}') && indexWxml.includes('设置我们的纪念日') &&
+    indexWxml.includes('wx:if="{{bound && !anniversaryLoading && !anniversaryError}}"'),
+    '首页纪念日：已设置展示天数和日期，绑定但未设置展示轻量入口，未绑定不显示');
+  assert(indexWxml.includes('bindtap="goAnniversaryEdit"') && mineWxml.includes('bindtap="goAnniversaryEdit"') &&
+    indexJs.includes("url: '/pages/anniversary-edit/anniversary-edit'") &&
+    mineJs.includes("url: '/pages/anniversary-edit/anniversary-edit'"),
+    '纪念日入口：首页卡片和我的设置项复用同一个编辑页');
+  assert(mineWxml.includes('<text class="bind-label">纪念日</text>') && mineWxml.includes("anniversaryText") &&
+    mineWxml.indexOf('anniversary-setting') > mineWxml.indexOf('<block wx:if="{{bound}}">'),
+    '我的纪念日：仅在已绑定设置列表中显示未设置或 YYYY.MM.DD');
+  assert(anniversaryEditWxml.includes('picker mode="date"') && anniversaryEditWxml.includes('end="{{maxDate}}"') &&
+    anniversaryEditWxml.includes('这一天将作为我们在一起的第1天') && anniversaryEditWxml.includes('bindtap="onSave"') &&
+    anniversaryEditWxss.includes('.save-button'),
+    '纪念日编辑页：只有日期选择、第一天提示和保存操作');
+  assert(anniversaryEditJs.includes("name: 'saveAnniversary'") &&
+    anniversaryEditJs.includes("channel.emit('anniversarySaved'") &&
+    indexJs.includes("res.eventChannel.on('anniversarySaved'") && mineJs.includes("res.eventChannel.on('anniversarySaved'") &&
+    /if \(this\._anniversaryDirty\)[\s\S]{0,150}this\.loadCoupleSettings\(\)/.test(indexJs) &&
+    /if \(this\._loaded && this\._anniversaryDirty\)[\s\S]{0,150}this\.loadCoupleSettings\(\)/.test(mineJs),
+    '纪念日保存同步：返回首页或我的后只刷新纪念日数据');
+  assert(!indexWxml.includes('最近报备') && !indexWxml.includes('我们的今天'),
+    '首页纪念日接入：不恢复最近报备或我们的今天');
 
   // ---------- 报备记录页固定发起入口 ----------
   console.log('\n== 报备记录页固定发起入口 ==');
@@ -1123,14 +1259,13 @@ function assert(cond, msg) {
     '账单 V2 分页：实例锁防重复，finally 恢复并丢弃过期响应');
   assert(billWxml.includes('加载中...') && billWxml.includes('没有更多了'), '账单 V2 分页：列表底部状态完整');
   assert(billJs.includes("name: 'getBillStats'") && billJs.includes('raw.categoryStats') && billJs.includes('raw.peopleStats'),
-    '账单 V2 统计：月度、分类和人员统计来自 getBillStats');
-  assert(billJs.includes('onDimChange') && !/onDimChange[\s\S]{0,220}loadBillFirstPage/.test(billJs),
-    '账单 V2 统计：切换统计维度不重载分页列表');
+    '账单 V2 统计：月度完整统计仍来自 getBillStats');
+  assert(!billWxml.includes('按月') && !billWxml.includes('按分类') && !billWxml.includes('按人员') &&
+    !billJs.includes('onDimChange') && !billJs.includes('buildDimList') && !billWxss.includes('.dim-tab'),
+    '账单组合筛选：旧统计维度 UI、事件和样式已完整删除');
   assert(!billWxml.includes('class="budget-card"') && billWxml.includes('本月预算') && billWxml.includes('未设置') &&
     billWxml.includes("budget.status === 'overspent'") && billWxml.includes('budget.resultText'),
     '账单 V2 汇总卡：预算并入粉色卡片且区分未设置、可用与超支');
-  assert(billWxml.includes('item.hasBudget') && billWxml.includes('item.budgetText'),
-    '账单 V2 分类预算：仅已配置分类展示预算使用情况');
   assert(budgetEditJs.includes('billCategories.EXPENSE_CATEGORIES') && !budgetEditJs.includes("key: 'food'"),
     '账单 V2 预算编辑：复用统一支出分类定义');
   assert(budgetEditJs.includes("name: 'saveBillBudget'") && budgetEditJs.includes('data: payload') &&
@@ -1144,6 +1279,36 @@ function assert(cond, msg) {
   assert(billJs.includes('while (hasMore)') && billJs.includes("type: 'all', person: 'all', category: ''") &&
     !/fetchAllBillsForExport[\s\S]{0,900}setData/.test(billJs),
     '账单 V2 CSV：三个月分别分页且完整数据不进入 setData');
+  assert(billJs.includes("const csv = '\\uFEFF'") && billJs.includes('.csv`') &&
+    billJs.includes('wx.env.USER_DATA_PATH') && billJs.includes("fs.writeFileSync(tmpPath, csv, 'utf8')") &&
+    billJs.includes('fs.statSync(tmpPath)') && billJs.includes('wx.shareFileMessage') &&
+    billJs.includes("console.error('[BillExport][SHARE_FAILED]', {"),
+    '账单导出：真实 UTF-8 BOM CSV 写入用户目录，校验非空后发送并保留真实失败日志');
+  assert(billWxml.includes('range="{{filterCategoryOptions}}"') &&
+    billWxml.includes('bindchange="onFilterCategoryChange"') &&
+    billJs.includes('onFilterCategoryChange(e)') && billJs.includes('buildCategoryOptions(type)') &&
+    billJs.includes("return [{ key: '', name: '全部' }].concat(this.getFilterCategories(type))") &&
+    billJs.includes('getFilterCategories(type)') &&
+    billJs.includes("if (type === 'expense') return this._expenseFilterCategories") &&
+    billJs.includes("if (type === 'income') return this._incomeFilterCategories") &&
+    billJs.includes('filterCategory: categoryValid ? this.data.filterCategory') &&
+    billJs.includes('filterPerson: values[idx]') && billJs.includes('filterCategory: selected.key'),
+    '账单组合筛选：原生 picker 可点击并生成分类选项，人员/分类只更新自身，类型变化仅在不兼容时清空分类');
+  assert(billJs.includes("this.buildCategoryOptions('all')") &&
+    billJs.includes('filterCategoryOptions: this.buildCategoryOptions(type)') &&
+    billJs.includes('this._expenseFilterCategories = billCategories.EXPENSE_CATEGORIES.map') &&
+    billJs.includes('this._incomeFilterCategories = billCategories.INCOME_CATEGORIES.map'),
+    '账单分类 picker：全部/支出/收入的数据源随类型正确生成');
+  assert(billJs.includes("console.log('[BillExport][FILE_READY]'" ) &&
+    billJs.includes("title: '文件已生成'") && billJs.includes("confirmText: '发送文件'") &&
+    billJs.includes('that.shareExportFile({ filePath: tmpPath, fileName, fileSize })') &&
+    /wx\.shareFileMessage\(\{\s*filePath: file\.filePath,\s*fileName: file\.fileName,/s.test(billJs) &&
+    billJs.includes("errMsg: err && err.errMsg") && billJs.includes("errCode: err && err.errCode") &&
+    /wx\.openDocument\(\{\s*filePath: file\.filePath,\s*showMenu: true,/s.test(billJs),
+    '账单导出真机：记录文件路径/名称/大小，用户二次点击直接分享，失败后尝试 openDocument');
+  assert(billJs.includes('`账单_${months[0]}至${months[months.length - 1]}.csv`') &&
+    !/const fileName[^\n]*[:\\/*?"<>|]/.test(billJs),
+    '账单导出：文件名简短且不含文件系统非法字符');
   assert(budgetEditWxml.includes('月总预算') && budgetEditWxml.includes('分类预算') && budgetEditWxml.includes('type="digit"'),
     '账单 V2 预算编辑：总预算必填与分类预算表单存在');
   const getBillStatsSource = fs.readFileSync(path.join(__dirname, '..', 'cloudfunctions', 'getBillStats', 'index.js'), 'utf8');
@@ -1157,9 +1322,15 @@ function assert(cond, msg) {
     '账单 V2 统计：兼容聚合字段别名、分组结构和数值包装类型');
   assert(getBillStatsSource.includes('_.gte(range.start).and(_.lt(range.end))') && getBillStatsSource.includes('`${yearMonth}-01`'),
     '账单 V2 统计：YYYY-MM-DD 字符串使用月初闭区间、下月月初开区间查询');
-  assert(!billJs.includes('[BillPage][STATS_RESPONSE]') && billJs.includes('const raw = result.stats || {}') &&
+  assert(!billJs.includes('[BillPage][STATS_RESPONSE]') && billJs.includes('const raw = result.filteredStats || result.stats || {}') &&
     billJs.includes('expense: Number(raw.expense)') && billWxml.includes('¥{{stats.expenseText}}'),
-    '账单 V2 前端：诊断日志已清理，仍读取 result.stats.expense 并绑定 stats.expenseText');
+    '账单 V2 前端：顶部金额读取筛选统计并绑定 stats.expenseText');
+  assert(billJs.includes('data: { yearMonth, type: filterType, person: filterPerson, category: filterCategory }') &&
+    /reloadFilteredList\(\)[\s\S]{0,500}this\.loadBillFirstPage[\s\S]{0,160}this\.loadBillStats/.test(billJs),
+    '账单筛选联动：筛选变化并行刷新第一页和服务端完整统计');
+  assert(getBillStatsSource.includes('monthStats') && getBillStatsSource.includes('filteredStats') &&
+    getBillStatsSource.includes('budget: buildBudget(record, monthStats.expense, monthCategoryExpense)'),
+    '账单筛选统计：同一次整月聚合派生筛选统计，预算始终使用整月支出');
   assert(billJs.includes("else if (this._budgetDirty) {\n      this._budgetDirty = false;\n      this.loadBillStats(this._billViewVersion);"),
     '账单 V2 预算刷新：只刷新统计且不会用零值重置列表或月度汇总');
 
@@ -1257,6 +1428,18 @@ function assert(cond, msg) {
   assert(minePage.list.every((item) => item.creatorId === userAId) && partnerPage.list.every((item) => item.creatorId === userBId),
     '账单 V2 筛选：mine/partner 由服务端真实双方身份映射');
   assert(foodPage.list.length > 0 && foodPage.list.every((item) => item.category === 'food'), '账单 V2 筛选：分类在服务端过滤');
+  const partnerFoodExpense = await callAs(A, 'getBills', {
+    yearMonth: '2026-07', page: 0, pageSize: 50, type: 'expense', person: 'partner', category: 'food'
+  });
+  assert(partnerFoodExpense.list.length > 0 && partnerFoodExpense.list.every((item) =>
+    item.type === 'expense' && item.creatorId === userBId && item.category === 'food'),
+  '账单组合筛选：expense + partner + food 三个条件同时生效');
+  const partnerFoodExpensePage2 = await callAs(A, 'getBills', {
+    yearMonth: '2026-07', page: 1, pageSize: 50, type: 'expense', person: 'partner', category: 'food'
+  });
+  assert(partnerFoodExpensePage2.success && partnerFoodExpensePage2.page === 1 && partnerFoodExpensePage2.list.every((item) =>
+    item.type === 'expense' && item.creatorId === userBId && item.category === 'food'),
+  '账单组合筛选：第二页继续继承完整三条件');
   const forgedScope = await callAs(A, 'getBills', {
     yearMonth: '2026-07', creatorId: 'id-foreign', partnerId: 'id-foreign', openid: C, userId: 'id-foreign'
   });
@@ -1283,6 +1466,15 @@ function assert(cond, msg) {
   assert(statsBeforeBudget.stats.categoryStats.reduce((sum, item) => sum + item.amount, 0) === 904 &&
     statsBeforeBudget.stats.peopleStats.reduce((sum, item) => sum + item.count, 0) === 1005,
     '账单 V2 统计：分类和人员聚合覆盖完整月份，不依赖 getBills 第一页');
+  const filteredJuneStats = await callAs(A, 'getBillStats', {
+    yearMonth: '2026-06', type: 'expense', person: 'partner', category: 'other'
+  });
+  assert(filteredJuneStats.success && filteredJuneStats.filteredStats.count === 402 &&
+    filteredJuneStats.filteredStats.expense === 402 && filteredJuneStats.filteredStats.income === 0 &&
+    filteredJuneStats.filteredStats.balance === -402,
+    '账单筛选统计：expense + partner + other 覆盖完整月份而非前 50 条');
+  assert(filteredJuneStats.monthStats.count === 1005 && filteredJuneStats.stats.count === 1005,
+    '账单筛选统计：monthStats 与兼容 stats 仍保持完整月份口径');
   assert(statsBeforeBudget.budget === null, '账单 V2 预算：未设置月份明确返回 budget=null');
 
   [100, 7.5, 46.93].forEach((amount, index) => store.bills.push({

@@ -48,9 +48,10 @@
       <view class="form-group">
         <view class="form-label">预计开始时间</view>
         <view class="picker-row">
-          <picker mode="date" value="{{startDate}}" bindchange="onStartDateChange" start="{{startDate}}">
+          <picker mode="multiSelector" range="{{startDatePickerRange}}" value="{{startDatePickerValue}}"
+            bindcolumnchange="onStartDateColumnChange" bindchange="onStartDateChange" bindcancel="onStartDatePickerCancel">
             <view class="form-picker picker-item">
-              <text class="{{startDate ? 'form-picker-value' : 'form-picker-value placeholder'}}">{{startDate || '选择日期'}}</text>
+              <text class="{{startDate ? 'form-picker-value' : 'form-picker-value placeholder'}}">{{startDateText || '选择日期'}}</text>
               <text class="picker-arrow">▾</text>
             </view>
           </picker>
@@ -66,9 +67,10 @@
       <view class="form-group">
         <view class="form-label"><text class="required">*</text>预计结束时间</view>
         <view class="picker-row">
-          <picker mode="date" value="{{date}}" bindchange="onDateChange" start="{{date}}">
+          <picker mode="multiSelector" range="{{datePickerRange}}" value="{{datePickerValue}}"
+            bindcolumnchange="onDateColumnChange" bindchange="onDateChange" bindcancel="onDatePickerCancel">
             <view class="form-picker picker-item">
-              <text class="{{date ? 'form-picker-value' : 'form-picker-value placeholder'}}">{{date || '选择日期'}}</text>
+              <text class="{{date ? 'form-picker-value' : 'form-picker-value placeholder'}}">{{dateText || '选择日期'}}</text>
               <text class="picker-arrow">▾</text>
             </view>
           </picker>
