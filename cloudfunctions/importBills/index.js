@@ -3,6 +3,20 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录' } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣再导入' } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+
 const CATEGORIES = {
   food: '餐饮', transport: '交通', shopping: '购物',
   fun: '娱乐', house: '居住', medical: '医疗',
@@ -36,10 +50,9 @@ exports.main = async (event, context) => {
   const billsCol = db.collection('bills');
 
   try {
-    const meRes = await users.where({ openid: OPENID }).get();
-    if (meRes.data.length === 0) return { success: false, msg: '请先登录' };
-    const me = meRes.data[0];
-    if (!me.partnerId) return { success: false, msg: '请先绑定伴侣再导入' };
+    const pair = await getCurrentPair(OPENID);
+    if (pair.error) return pair.error;
+    const me = pair.me;
 
     let success = 0;
     let fail = 0;
@@ -62,7 +75,9 @@ exports.main = async (event, context) => {
           openid: OPENID,
           creatorId: me._id,
           creatorName: me.nickName || '伴侣',
-          partnerId: me.partnerId,
+          partnerId: pair.partner._id,
+          pairKey: pair.pairKey,
+          memberIds: pair.memberIds,
           type, category,
           categoryName: CATEGORIES[category] || '其他',
           amount, matter, note, billDate,

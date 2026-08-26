@@ -4,6 +4,21 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: true };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: true };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: true };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+function assertPairRecordAccess(record, pair) { return !record.pairKey || (!!pair && !pair.error && record.pairKey === pair.pairKey); }
+
 exports.main = async (event, context) => {
   const { OPENID } = cloud.getWXContext();
   const billId = String(event.id || '');
@@ -24,6 +39,8 @@ exports.main = async (event, context) => {
       return { success: false, msg: '账单不存在' };
     }
     const bill = billRes.data;
+    const pair = bill.pairKey ? await getCurrentPair(OPENID) : null;
+    if (!assertPairRecordAccess(bill, pair)) return { success: false, msg: '无权查看此账单' };
 
     // 只能查看自己或伴侣的账单
     if (bill.creatorId !== me._id && bill.partnerId !== me._id) {

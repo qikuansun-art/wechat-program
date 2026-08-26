@@ -297,6 +297,7 @@ function assert(cond, msg) {
   const D = 'openid-DDD', E = 'openid-EEE', F = 'openid-FFF';
   const G = 'openid-GGG', H = 'openid-HHH';
   const I = 'openid-III', J = 'openid-JJJ';
+  const K = 'openid-KKK';
 
   // ---------- 登录 ----------
   console.log('\n== 登录 ==');
@@ -1619,6 +1620,97 @@ function assert(cond, msg) {
   assert(normalUnbind.success, '正常双向解绑：请求成功');
   assert(!store.users.find((u) => u.openid === A).partnerId && !store.users.find((u) => u.openid === B).partnerId,
     '正常双向解绑：双方关系同时清空');
+
+  // ---------- 多情侣数据隔离 V1.1 Phase 1 ----------
+  console.log('\n== 多情侣数据隔离 V1.1 Phase 1 ==');
+  await callAs(K, 'login');
+  const userA = store.users.find((u) => u.openid === A);
+  const userB = store.users.find((u) => u.openid === B);
+  const userC = store.users.find((u) => u.openid === C);
+  const userD = store.users.find((u) => u.openid === K);
+  await callAs(A, 'bind', { code: userB.bindCode });
+  await callAs(C, 'bind', { code: userD.bindCode });
+  const pairAB = [userA._id, userB._id].sort().join('|');
+  const pairCD = [userC._id, userD._id].sort().join('|');
+
+  const abBill = await callAs(A, 'addBill', {
+    type: 'expense', category: 'food', amount: 12, billDate: '2026-08-20',
+    pairKey: pairCD, memberIds: [userC._id, userD._id], partnerId: userD._id, creatorId: userC._id
+  });
+  const cdBill = await callAs(C, 'addBill', { type: 'expense', category: 'food', amount: 13, billDate: '2026-08-20' });
+  const abBillRecord = store.bills.find((item) => item._id === abBill.id);
+  const cdBillRecord = store.bills.find((item) => item._id === cdBill.id);
+  assert(abBillRecord.pairKey === pairAB && deepEqual(abBillRecord.memberIds, [userA._id, userB._id].sort()) && abBillRecord.partnerId === userB._id,
+    'PairKey：A 伪造 pairKey/memberIds/partnerId/creatorId 不影响服务端写入 A|B');
+  assert(cdBillRecord.pairKey === pairCD && cdBillRecord.partnerId === userD._id,
+    'PairKey：C/D 新账单写入独立 pairKey');
+
+  const abReport = await callAs(A, 'createReport', { location: 'A地', returnTime: '2026-08-21 20:00', reason: '测试' });
+  const cdReport = await callAs(C, 'createReport', { location: 'C地', returnTime: '2026-08-21 20:00', reason: '测试' });
+  assert(store.reports.find((item) => item._id === abReport.id).pairKey === pairAB &&
+    store.reports.find((item) => item._id === cdReport.id).pairKey === pairCD,
+  'PairKey：A/B 与 C/D 新报备写入独立 pairKey');
+
+  const abSchedule = await callAs(A, 'saveSchedule', {
+    type: 'todo', title: 'AB循环事项', ownerType: 'couple', repeatType: 'daily',
+    repeatStartDate: '2026-08-20', repeatEndDate: '2026-08-22', pairKey: pairCD, partnerId: userD._id
+  });
+  const cdSchedule = await callAs(C, 'saveSchedule', {
+    type: 'todo', title: 'CD循环事项', ownerType: 'couple', repeatType: 'daily',
+    repeatStartDate: '2026-08-20', repeatEndDate: '2026-08-22'
+  });
+  const abScheduleRecord = store.schedules.find((item) => item._id === abSchedule.id);
+  const cdScheduleRecord = store.schedules.find((item) => item._id === cdSchedule.id);
+  assert(abScheduleRecord.pairKey === pairAB && cdScheduleRecord.pairKey === pairCD,
+    'PairKey：A/B 与 C/D 新日程忽略客户端身份并写入独立 pairKey');
+  const abToggle = await callAs(A, 'toggleSchedule', { id: abSchedule.id, occurrenceDate: '2026-08-20', completed: true });
+  const abCompletion = store.schedule_completions.find((item) => item.scheduleId === abSchedule.id && item.occurrenceDate === '2026-08-20');
+  assert(abToggle.success && abCompletion.pairKey === pairAB,
+    'PairKey：循环 completion 从已验证父日程继承 A|B');
+  const forgedScheduleToggle = await callAs(A, 'toggleSchedule', { id: cdSchedule.id, occurrenceDate: '2026-08-20', completed: true });
+  assert(!forgedScheduleToggle.success,
+    'PairKey：A 伪造 C/D scheduleId 无法 toggle 新格式日程');
+
+  const cdBudget = await callAs(C, 'saveBillBudget', { month: '2026-11', totalBudget: 88, categoryBudgets: {}, pairKey: pairAB });
+  const cdAnniversary = await callAs(C, 'saveAnniversary', { anniversaryDate: '2026-01-01', pairKey: pairAB });
+  const cdSettingsRecord = store.couple_settings.find((item) => item.pairKey === pairCD);
+  assert(cdBudget.success && cdBudget.budget.pairKey === pairCD && cdAnniversary.success && !!cdSettingsRecord,
+    'PairKey：预算和纪念日继续忽略伪造 pairKey');
+
+  const phaseLegacySchedule = {
+    _id: 'legacy-no-pair-schedule', creatorId: userA._id, creatorName: 'A', type: 'todo', title: '旧事项',
+    ownerType: 'couple', repeatType: 'none', date: '2026-08-23', completed: false
+  };
+  store.schedules.push(phaseLegacySchedule);
+  const legacyEdit = await callAs(A, 'saveSchedule', {
+    id: phaseLegacySchedule._id, type: 'todo', title: '旧事项编辑', ownerType: 'couple', repeatType: 'none', date: '2026-08-23'
+  });
+  assert(legacyEdit.success && !store.schedules.find((item) => item._id === phaseLegacySchedule._id).pairKey,
+    'PairKey：编辑旧日程不会用当前伴侣危险回填 pairKey');
+
+  await callAs(A, 'unbind');
+  await callAs(C, 'unbind');
+  await callAs(A, 'bind', { code: userC.bindCode });
+  const pairAC = [userA._id, userC._id].sort().join('|');
+  const acBill = await callAs(A, 'addBill', { type: 'expense', category: 'other', amount: 21, billDate: '2026-08-24' });
+  const acSchedule = await callAs(A, 'saveSchedule', { type: 'todo', title: 'AC事项', ownerType: 'couple', repeatType: 'none', date: '2026-08-24' });
+  const acReport = await callAs(A, 'createReport', { location: 'AC地', returnTime: '2026-08-24 20:00', reason: '测试' });
+  assert(store.bills.find((item) => item._id === acBill.id).pairKey === pairAC &&
+    store.schedules.find((item) => item._id === acSchedule.id).pairKey === pairAC &&
+    store.reports.find((item) => item._id === acReport.id).pairKey === pairAC && pairAC !== pairAB,
+  'PairKey：A/B 解绑后 A/C 新账单、日程、报备全部切换为 A|C');
+
+  const migrationAudit = require('./audit_pairkey_migration');
+  const dryRun = migrationAudit.analyzeMigration({
+    bills: [{ _id: 'b1', creatorId: userA._id, partnerId: userB._id }, { _id: 'b2', creatorId: userA._id }],
+    reports: [{ _id: 'r1', creatorId: userC._id, partnerId: userD._id }],
+    schedules: [{ _id: 's-old', creatorId: userA._id }, { _id: 's-new', creatorId: userA._id, pairKey: pairAB }],
+    schedule_completions: [{ _id: 'c-old', scheduleId: 's-old' }, { _id: 'c-new', scheduleId: 's-new' }]
+  });
+  assert(dryRun.bills[0].status === 'CANDIDATE' && dryRun.bills[1].status === 'MANUAL_REVIEW' &&
+    dryRun.schedules[0].status === 'MANUAL_REVIEW' && dryRun.schedule_completions[0].status === 'MANUAL_REVIEW' &&
+    dryRun.schedule_completions[1].pairKey === pairAB,
+  'PairKey migration dry-run：可推导记录给 candidate，不确定日程/completion 标 MANUAL_REVIEW');
 
   // ---------- 汇总 ----------
   console.log('\n================ 测试结果 ================');

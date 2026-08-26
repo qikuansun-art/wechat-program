@@ -5,6 +5,20 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录' } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣再导入' } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+
 // 分类定义（key → 中文名）
 const CATEGORIES = {
   food: '餐饮', transport: '交通', shopping: '购物',
@@ -406,15 +420,9 @@ exports.main = async (event, context) => {
     }
 
     // ========== 5. 获取用户信息 ==========
-    var users = db.collection('users');
-    var meRes = await users.where({ openid: OPENID }).get();
-    if (meRes.data.length === 0) {
-      return { success: false, msg: '请先登录' };
-    }
-    var me = meRes.data[0];
-    if (!me.partnerId) {
-      return { success: false, msg: '请先绑定伴侣再导入' };
-    }
+    var pair = await getCurrentPair(OPENID);
+    if (pair.error) return pair.error;
+    var me = pair.me;
 
     // ========== 6. 批量写入数据库 ==========
     var billsCol = db.collection('bills');
@@ -429,7 +437,9 @@ exports.main = async (event, context) => {
             openid: OPENID,
             creatorId: me._id,
             creatorName: me.nickName || '伴侣',
-            partnerId: me.partnerId,
+            partnerId: pair.partner._id,
+            pairKey: pair.pairKey,
+            memberIds: pair.memberIds,
             type: b.type,
             category: b.category,
             categoryName: CATEGORIES[b.category] || '其他',

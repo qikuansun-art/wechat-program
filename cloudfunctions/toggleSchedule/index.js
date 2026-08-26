@@ -24,7 +24,9 @@ function isDuplicateError(err) {
   const message = String(err && (err.errMsg || err.message || err));
   return /duplicate|duplicated|E11000|-502001|unique/i.test(message);
 }
-async function getBoundUser(openid) {
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+function assertPairRecordAccess(record, pair) { return !record.pairKey || record.pairKey === pair.pairKey; }
+async function getCurrentPair(openid) {
   const users = db.collection('users');
   const res = await users.where({ openid }).get();
   if (res.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录' } };
@@ -32,7 +34,9 @@ async function getBoundUser(openid) {
   if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣' } };
   const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
   if (!partnerRes || !partnerRes.data || partnerRes.data.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
-  return { me, userIds: [me._id, me.partnerId] };
+  const partner = partnerRes.data;
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds), userIds: memberIds };
 }
 function recurringResult(schedule, occurrenceDate, completion) {
   return { success: true, schedule: Object.assign({}, schedule, {
@@ -44,7 +48,7 @@ function recurringResult(schedule, occurrenceDate, completion) {
 
 exports.main = async (event = {}) => {
   try {
-    const auth = await getBoundUser(cloud.getWXContext().OPENID);
+    const auth = await getCurrentPair(cloud.getWXContext().OPENID);
     if (auth.error) return auth.error;
     const id = typeof event.id === 'string' ? event.id.trim() : '';
     if (!id) return { success: false, code: 'INVALID_ID', msg: '事项参数不正确' };
@@ -52,7 +56,7 @@ exports.main = async (event = {}) => {
     const ref = db.collection('schedules').doc(id);
     const res = await ref.get().catch(() => null);
     const schedule = res && res.data;
-    if (!schedule || !auth.userIds.includes(schedule.creatorId)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
+    if (!schedule || !auth.userIds.includes(schedule.creatorId) || !assertPairRecordAccess(schedule, auth)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
     if (!['schedule', 'todo', 'checkin'].includes(schedule.type)) return { success: false, code: 'INVALID_TYPE', msg: '事项类型异常' };
     const repeatType = ['daily', 'weekly', 'monthly'].includes(schedule.repeatType) ? schedule.repeatType : 'none';
     const recurring = repeatType !== 'none';
@@ -77,7 +81,12 @@ exports.main = async (event = {}) => {
     if (event.completed) {
       const existing = await findCompletion();
       if (existing) return recurringResult(schedule, occurrenceDate, existing);
-      const completion = { scheduleId: id, occurrenceDate, completedBy: auth.me._id, completedByName: auth.me.nickName || '伴侣', completedAt: now, updatedAt: now };
+      const completion = {
+        scheduleId: id, occurrenceDate, completedBy: auth.me._id,
+        completedByName: auth.me.nickName || '伴侣', completedAt: now, updatedAt: now
+      };
+      if (schedule.pairKey) completion.pairKey = schedule.pairKey;
+      else console.warn('[PairMigration][SCHEDULE_COMPLETION_CANDIDATE]', { scheduleId: id.slice(-8) });
       try {
         const added = await completions.add({ data: completion });
         return recurringResult(schedule, occurrenceDate, Object.assign({ _id: added._id }, completion));

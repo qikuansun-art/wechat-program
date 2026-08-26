@@ -5,6 +5,20 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录' } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣再发起报备' } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+
 const TEMPLATE_NEW_REPORT = '9Olki2zL-v7V_Nse9V0MNTWq2d8nlTIo6aW1YV1Gmvg';
 const NOTIFY_PAGE = 'pages/message/message';
 const MINIPROGRAM_STATE = 'formal';
@@ -81,21 +95,18 @@ exports.main = async (event, context) => {
   if (!reason) return { success: false, msg: '请填写事由说明' };
 
   try {
-    const meRes = await users.where({ openid: OPENID }).get();
-    if (meRes.data.length === 0) {
-      return { success: false, msg: '请先登录' };
-    }
-    const me = meRes.data[0];
-    if (!me.partnerId) {
-      return { success: false, msg: '请先绑定伴侣再发起报备' };
-    }
+    const pair = await getCurrentPair(OPENID);
+    if (pair.error) return pair.error;
+    const me = pair.me;
 
     const report = {
       openid: OPENID,                  // 发起人 openid
       creatorId: me._id,               // 发起人用户文档 _id
       creatorName: me.nickName || '伴侣',
       creatorAvatar: me.avatarUrl || '',
-      partnerId: me.partnerId,         // 审批人用户文档 _id
+      partnerId: pair.partner._id,     // 审批人用户文档 _id
+      pairKey: pair.pairKey,
+      memberIds: pair.memberIds,
       location,
       companions,
       startTime,                       // 预计开始时间（可选）
@@ -113,12 +124,7 @@ exports.main = async (event, context) => {
 
     // 查真实审批方并推送。接收人、页面和内容均不接受客户端指定。
     try {
-      const partnerRes = await users.doc(me.partnerId).get();
-      if (partnerRes.data && partnerRes.data.partnerId === me._id) {
-        await notifyPartner(partnerRes.data.openid, Object.assign({}, report, { _id: addRes._id, createdAt: new Date() }));
-      } else {
-        console.warn('[createReport] 伴侣关系不一致，跳过通知, partnerId:', String(me.partnerId).slice(-6) + '...');
-      }
+      await notifyPartner(pair.partner.openid, Object.assign({}, report, { _id: addRes._id, createdAt: new Date() }));
     } catch (notifyErr) {
       console.error('[createReport] 查询审批方失败（忽略）', notifyErr);
     }

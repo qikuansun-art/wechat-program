@@ -4,6 +4,21 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: true };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: true };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: true };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+function assertPairRecordAccess(record, pair) { return !record.pairKey || (!!pair && !pair.error && record.pairKey === pair.pairKey); }
+
 // 允许的记账分类（与 addBill 保持一致）
 const CATEGORIES = {
   food: '餐饮',
@@ -62,6 +77,8 @@ exports.main = async (event, context) => {
       return { success: false, msg: '账单不存在' };
     }
     const bill = billRes.data;
+    const pair = bill.pairKey ? await getCurrentPair(OPENID) : null;
+    if (!assertPairRecordAccess(bill, pair)) return { success: false, msg: '无权修改此账单' };
     if (bill.creatorId !== me._id) {
       return { success: false, msg: '只能修改自己记的账哦' };
     }

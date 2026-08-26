@@ -4,6 +4,20 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录' } };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣再记账（共享账本）' } };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+
 // 允许的记账分类（与前端 pages/bill-edit 保持一致）
 const CATEGORIES = {
   food: '餐饮',
@@ -44,15 +58,9 @@ exports.main = async (event, context) => {
   }
 
   try {
-    // 1. 当前用户
-    const meRes = await users.where({ openid: OPENID }).get();
-    if (meRes.data.length === 0) {
-      return { success: false, msg: '请先登录' };
-    }
-    const me = meRes.data[0];
-    if (!me.partnerId) {
-      return { success: false, msg: '请先绑定伴侣再记账（共享账本）' };
-    }
+    const pair = await getCurrentPair(OPENID);
+    if (pair.error) return pair.error;
+    const me = pair.me;
 
     // 2. 写入账单
     const categoryName = CATEGORIES[category] || '其他';
@@ -61,7 +69,9 @@ exports.main = async (event, context) => {
         openid: OPENID,                  // 记账人 openid
         creatorId: me._id,               // 记账人用户 _id
         creatorName: me.nickName || '伴侣',
-        partnerId: me.partnerId,         // 对方 _id（共享账本查询用）
+        partnerId: pair.partner._id,     // 对方 _id（历史兼容/展示）
+        pairKey: pair.pairKey,
+        memberIds: pair.memberIds,
         type,                            // expense | income
         category,                        // 分类 key
         categoryName,                    // 分类名（冗余展示）

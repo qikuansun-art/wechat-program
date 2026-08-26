@@ -60,7 +60,9 @@ function validateInput(event, auth) {
   return { value };
 }
 
-async function getBoundUser(openid) {
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+function assertPairRecordAccess(record, pair) { return !record.pairKey || record.pairKey === pair.pairKey; }
+async function getCurrentPair(openid) {
   const users = db.collection('users');
   const res = await users.where({ openid }).get();
   if (res.data.length !== 1) return { error: { success: false, code: 'USER_NOT_FOUND', msg: '请先登录' } };
@@ -68,12 +70,14 @@ async function getBoundUser(openid) {
   if (!me.partnerId) return { error: { success: false, code: 'NOT_BOUND', msg: '请先绑定伴侣' } };
   const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
   if (!partnerRes || !partnerRes.data || partnerRes.data.partnerId !== me._id) return { error: { success: false, code: 'BINDING_INVALID', msg: '绑定关系异常，请重新绑定' } };
-  return { me, userIds: [me._id, me.partnerId] };
+  const partner = partnerRes.data;
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds), userIds: memberIds };
 }
 
 exports.main = async (event = {}) => {
   try {
-    const auth = await getBoundUser(cloud.getWXContext().OPENID);
+    const auth = await getCurrentPair(cloud.getWXContext().OPENID);
     if (auth.error) return auth.error;
     const checked = validateInput(event, auth);
     if (checked.error) return checked.error;
@@ -84,6 +88,7 @@ exports.main = async (event = {}) => {
       const schedule = Object.assign({}, checked.value, {
         creatorId: auth.me._id, creatorName: auth.me.nickName || '伴侣', completed: false,
         completedBy: '', completedByName: '', completedAt: null,
+        pairKey: auth.pairKey, memberIds: auth.memberIds,
         createdAt: now, updatedAt: now, updatedBy: auth.me._id
       });
       const result = await schedules.add({ data: schedule });
@@ -91,7 +96,7 @@ exports.main = async (event = {}) => {
     }
     const existingRes = await schedules.doc(id).get().catch(() => null);
     const existing = existingRes && existingRes.data;
-    if (!existing || !auth.userIds.includes(existing.creatorId)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
+    if (!existing || !auth.userIds.includes(existing.creatorId) || !assertPairRecordAccess(existing, auth)) return { success: false, code: 'NOT_FOUND', msg: '事项不存在或无权访问' };
     const previousRepeatType = existing.repeatType || 'none';
     const update = Object.assign({}, checked.value, { updatedAt: now, updatedBy: auth.me._id });
     if (previousRepeatType !== checked.value.repeatType || (checked.value.type === 'schedule' && existing.type !== 'schedule')) {

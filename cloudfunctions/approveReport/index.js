@@ -5,6 +5,21 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
+function buildPairKey(memberIds) { return memberIds.slice().sort().join('|'); }
+async function getCurrentPair(openid) {
+  const users = db.collection('users');
+  const meRes = await users.where({ openid }).get();
+  if (meRes.data.length !== 1) return { error: true };
+  const me = meRes.data[0];
+  if (!me.partnerId) return { error: true };
+  const partnerRes = await users.doc(me.partnerId).get().catch(() => null);
+  const partner = partnerRes && partnerRes.data;
+  if (!partner || partner.partnerId !== me._id) return { error: true };
+  const memberIds = [me._id, partner._id].sort();
+  return { me, partner, memberIds, pairKey: buildPairKey(memberIds) };
+}
+function assertPairRecordAccess(record, pair) { return !record.pairKey || (!!pair && !pair.error && record.pairKey === pair.pairKey); }
+
 const TEMPLATE_APPROVE_RESULT = 'nrteb3ujtZBTIHtyABGP0FGP3Dy19PxRelc0IFFnaB8';
 const NOTIFY_PAGE = 'pages/record/record';
 const MINIPROGRAM_STATE = 'formal';
@@ -104,7 +119,9 @@ exports.main = async (event, context) => {
   }
 
   let committedReport = null;
+  let currentPair = null;
   try {
+    currentPair = await getCurrentPair(OPENID);
     // 在事务中重新读取并更新报备。并发事务发生写冲突时，云数据库会重试；
     // 重试后的请求会读到非 pending 状态，因此最多只有一个请求能够成功。
     await db.runTransaction(async (transaction) => {
@@ -119,6 +136,10 @@ exports.main = async (event, context) => {
         throw new BusinessError('报备不存在');
       }
       const report = reportRes.data;
+
+      if (report.pairKey) {
+        if (!assertPairRecordAccess(report, currentPair)) throw new BusinessError('无权操作此报备');
+      }
 
       if (report.partnerId !== me._id) {
         throw new BusinessError('无权操作此报备');
