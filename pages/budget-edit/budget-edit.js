@@ -1,5 +1,6 @@
 const util = require('../../utils/util');
 const billCategories = require('../../utils/bill-categories');
+const budgetCopy = require('../../utils/bill-budget-copy');
 
 function normalizeMoneyInput(value) {
   let next = String(value || '').replace(/[^\d.]/g, '');
@@ -23,7 +24,7 @@ function sameBudget(actual, target) {
 }
 
 Page({
-  data: { month: '', monthText: '', totalBudget: '', categories: [], saving: false },
+  data: { month: '', monthText: '', totalBudget: '', categories: [], saving: false, copyingPrevious: false },
 
   onLoad(options) {
     const month = /^\d{4}-\d{2}$/.test(options.month || '') ? options.month : util.monthOf(new Date());
@@ -34,14 +35,73 @@ Page({
   },
 
   fillBudget(budget) {
-    if (!budget) return;
-    const values = budget.categoryBudgets || {};
+    const copied = budgetCopy.buildCopiedForm(budget);
+    if (!copied) return;
+    const values = copied.categoryBudgets;
     this.setData({
-      totalBudget: String(budget.totalBudget),
+      totalBudget: copied.totalBudget,
       categories: this.data.categories.map((item) => Object.assign({}, item, {
         amount: Object.prototype.hasOwnProperty.call(values, item.key) ? String(values[item.key]) : ''
       }))
     });
+  },
+
+  previousMonth() {
+    return budgetCopy.previousMonth(this.data.month);
+  },
+
+  monthLabel(month) {
+    return `${Number(month.slice(0, 4))}年${Number(month.slice(5))}月`;
+  },
+
+  hasFormContent() {
+    return this.data.totalBudget !== '' || this.data.categories.some((item) => item.amount !== '');
+  },
+
+  confirmUsePrevious(previousMonth) {
+    const hasContent = this.hasFormContent();
+    const content = hasContent
+      ? `将用 ${this.monthLabel(previousMonth)} 的总预算和分类预算覆盖当前页面已填写的预算内容，但不会立即保存。`
+      : `将把 ${this.monthLabel(previousMonth)} 的总预算和分类预算填入当前月份，之后仍可继续修改。`;
+    return new Promise((resolve) => {
+      wx.showModal({
+        title: '使用上个月预算？',
+        content,
+        cancelText: '取消',
+        confirmText: '使用',
+        success: (res) => resolve(!!res.confirm),
+        fail: () => resolve(false)
+      });
+    });
+  },
+
+  async onUsePreviousBudget() {
+    if (this.data.copyingPrevious || this.data.saving) return;
+    const previousMonth = this.previousMonth();
+    this.setData({ copyingPrevious: true });
+    wx.showLoading({ title: '读取中...', mask: true });
+    let previousBudget = null;
+    try {
+      const res = await wx.cloud.callFunction({ name: 'getBillStats', data: { yearMonth: previousMonth } });
+      const result = res && res.result || {};
+      if (!result.success) throw new Error(result.msg || 'getBillStats failed');
+      previousBudget = result.budget || null;
+    } catch (err) {
+      console.error('[BudgetCopyPrevious] load failed', err);
+      wx.hideLoading();
+      this.setData({ copyingPrevious: false });
+      util.toast('上个月预算读取失败');
+      return;
+    }
+    wx.hideLoading();
+    if (!previousBudget) {
+      this.setData({ copyingPrevious: false });
+      util.toast('上个月没有设置预算');
+      return;
+    }
+    const confirmed = await this.confirmUsePrevious(previousMonth);
+    if (confirmed) this.fillBudget(previousBudget);
+    this.setData({ copyingPrevious: false });
   },
 
   onTotalInput(e) {

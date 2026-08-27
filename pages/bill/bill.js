@@ -1,6 +1,8 @@
 // pages/bill/bill.js —— 账单页（Tab）：情侣共享账本
 const util = require('../../utils/util');
 const billCategories = require('../../utils/bill-categories');
+const billBudgetRows = require('../../utils/bill-budget-rows');
+const billSummary = require('../../utils/bill-summary');
 
 // 金额格式化：千分位 + 两位小数
 function formatMoney(n) {
@@ -20,8 +22,14 @@ Page({
     listError: false,
     statsError: false,
     notBound: false,
+    activeBillSheet: 0,
+    billSheetCurrent: 0,
+    categoryBudgetRows: [],
     yearMonth: '',
     yearMonthText: '',
+    monthSwiperCurrent: 1,
+    monthSwiperDuration: 280,
+    monthSlides: [],
     // 统计
     stats: {
       expense: 0, expenseText: '0.00',
@@ -42,6 +50,7 @@ Page({
     page: 0,
     hasMore: false,
     budget: null,
+    summaryBudget: null,
     catIconMap: {},
     catNameMap: {},
     // 左滑操作
@@ -67,12 +76,18 @@ Page({
     this._expenseFilterCategories = billCategories.EXPENSE_CATEGORIES.map((item) => ({ key: item.key, name: item.name }));
     this._incomeFilterCategories = billCategories.INCOME_CATEGORIES.map((item) => ({ key: item.key, name: item.name }));
     this._allFilterCategories = Object.keys(catNameMap).map((key) => ({ key, name: catNameMap[key] }));
-    this.setData({ catIconMap, catNameMap, filterCategoryOptions: this.buildCategoryOptions('all') });
+    this.setData({
+      catIconMap,
+      catNameMap,
+      filterCategoryOptions: this.buildCategoryOptions('all')
+    });
 
     const now = new Date();
+    const yearMonth = util.monthOf(now);
     this.setData({
-      yearMonth: util.monthOf(now),
-      yearMonthText: util.monthText(now)
+      yearMonth,
+      yearMonthText: util.monthText(now),
+      monthSlides: this.buildMonthSlides(yearMonth)
     });
   },
 
@@ -107,18 +122,23 @@ Page({
     this.refreshView().finally(() => wx.stopPullDownRefresh());
   },
 
-  async refreshView() {
+  async refreshView(options = {}) {
+    const preserveData = !!options.preserveData;
     const version = ++this._billViewVersion;
     this._loaded = true;
     ++this._billListRequestId;
     ++this._billStatsRequestId;
     this._loadingMore = false;
     this._billStats = null;
-    this.setData({
-      filteredList: [], page: 0, hasMore: false, loading: true, loadingMore: false,
-      statsLoading: true, listError: false, statsError: false, swipedId: '', budget: null,
+    const resetPatch = {
+      page: 0, hasMore: false, loading: true, loadingMore: false,
+      statsLoading: true, listError: false, statsError: false, swipedId: ''
+    };
+    if (!preserveData) Object.assign(resetPatch, {
+      filteredList: [], budget: null, summaryBudget: null, categoryBudgetRows: [],
       stats: { expense: 0, expenseText: '0.00', income: 0, incomeText: '0.00', balance: 0, balanceText: '0.00', count: 0, categoryStats: [], peopleStats: [] }
     });
+    this.setData(resetPatch);
     await Promise.allSettled([
       this.loadBillFirstPage(version),
       this.loadBillStats(version)
@@ -180,7 +200,7 @@ Page({
       id: b.id,
       type: b.type,
       category: b.category,
-      categoryName: b.categoryName,
+      categoryName: billCategories.getCategoryName(b.category),
       matter: b.matter,
       note: b.note,
       amount: b.amount,
@@ -205,7 +225,8 @@ Page({
       const result = res.result || {};
       if (!result.success) throw new Error(result.msg || 'getBillStats failed');
       const raw = result.filteredStats || result.stats || {};
-      this._billStats = result.monthStats || result.stats || {};
+      const monthStats = result.monthStats || result.stats || {};
+      this._billStats = monthStats;
       const stats = {
         expense: Number(raw.expense) || 0, expenseText: formatMoney(raw.expense),
         income: Number(raw.income) || 0, incomeText: formatMoney(raw.income),
@@ -214,7 +235,12 @@ Page({
         categoryStats: raw.categoryStats || [], peopleStats: raw.peopleStats || []
       };
       const budget = this.formatBudget(result.budget);
-      this.setData({ stats, budget, statsLoading: false, statsError: false, notBound: false });
+      const summaryBudget = this.formatBudget(billSummary.buildSummaryBudget(result.budget, {
+        type: filterType,
+        category: filterCategory
+      }, stats.expense));
+      const categoryBudgetRows = billBudgetRows.buildCategoryBudgetRows(monthStats, result.budget);
+      this.setData({ stats, budget, summaryBudget, categoryBudgetRows, statsLoading: false, statsError: false, notBound: false });
     } catch (err) {
       if (requestId !== this._billStatsRequestId || version !== this._billViewVersion) return;
       console.error('加载账单统计失败', err);
@@ -231,19 +257,63 @@ Page({
     });
   },
 
-  /** 上一个月 */
-  onPreMonth() { this.shiftMonth(-1); },
-  onNextMonth() { this.shiftMonth(1); },
+  onBillSheetTabTap(e) {
+    const index = Number(e.currentTarget.dataset.index);
+    if (index !== 0 && index !== 1) return;
+    this.setData({ billSheetCurrent: index });
+  },
 
-  shiftMonth(delta) {
-    const [y, m] = this.data.yearMonth.split('-').map(Number);
-    const d = new Date(y, m - 1 + delta, 1);
-    ++this._billViewVersion;
-    this.setData({
-      yearMonth: util.monthOf(d),
-      yearMonthText: util.monthText(d)
+  onBillSheetAnimationFinish(e) {
+    const index = Number(e.detail.current);
+    if (index !== 0 && index !== 1) return;
+    this.setData({ activeBillSheet: index, billSheetCurrent: index });
+  },
+
+  buildMonthSlides(yearMonth) {
+    return [-1, 0, 1].map((offset) => {
+      const value = this.shiftYearMonth(yearMonth, offset);
+      const [year, month] = value.split('-').map(Number);
+      return { value, text: `${year}年${month}月` };
     });
-    this.refreshView();
+  },
+
+  shiftYearMonth(yearMonth, delta) {
+    const [year, month] = yearMonth.split('-').map(Number);
+    return util.monthOf(new Date(year, month - 1 + delta, 1));
+  },
+
+  onPreMonth() { this.requestMonthChange(-1); },
+  onNextMonth() { this.requestMonthChange(1); },
+
+  onMonthArrowTap(e) {
+    this.requestMonthChange(Number(e.currentTarget.dataset.direction));
+  },
+
+  requestMonthChange(direction) {
+    if (this._monthSwiperAnimating || (direction !== -1 && direction !== 1)) return;
+    this._monthSwiperAnimating = true;
+    this.setData({ monthSwiperDuration: 280, monthSwiperCurrent: direction < 0 ? 0 : 2 });
+  },
+
+  onMonthSwiperAnimationFinish(e) {
+    const index = Number(e.detail.current);
+    this._monthSwiperAnimating = false;
+    if (index === 1) return;
+    if (index !== 0 && index !== 2) return;
+    this.changeMonth(index === 0 ? -1 : 1);
+  },
+
+  changeMonth(direction) {
+    const yearMonth = this.shiftYearMonth(this.data.yearMonth, direction);
+    const [year, month] = yearMonth.split('-').map(Number);
+    this.setData({
+      yearMonth,
+      yearMonthText: `${year}年${month}月`,
+      monthSlides: this.buildMonthSlides(yearMonth),
+      monthSwiperCurrent: 1,
+      monthSwiperDuration: 0
+    }, () => this.setData({ monthSwiperDuration: 280 }));
+    this.refreshView({ preserveData: true });
   },
 
   /** 筛选：收支类型 */
@@ -309,6 +379,7 @@ Page({
   },
 
   loadMore() {
+    if (this.data.activeBillSheet !== 1) return;
     if (this.data.loading || this.data.loadingMore || !this.data.hasMore) return;
     this.loadBillPage(this.data.page + 1, false, this._billViewVersion);
   },
@@ -495,7 +566,7 @@ Page({
       const csvCell = (value) => `"${String(value === undefined || value === null ? '' : value).replace(/"/g, '""')}"`;
       const rows = [['日期', '类型', '分类', '金额', '事项', '备注', '记录人']];
       all.forEach((b) => rows.push([
-        b.billDate, b.type === 'income' ? '收入' : '支出', b.categoryName,
+        b.billDate, b.type === 'income' ? '收入' : '支出', billCategories.getCategoryName(b.category),
         b.amount, b.matter, b.note, b.creatorName
       ]));
       const csv = '\uFEFF' + rows.map((row) => row.map(csvCell).join(',')).join('\r\n');

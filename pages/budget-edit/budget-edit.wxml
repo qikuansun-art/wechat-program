@@ -1,5 +1,6 @@
 <view class="page">
   <view class="month-title">{{monthText}}</view>
+  <button class="copy-previous-btn" loading="{{copyingPrevious}}" disabled="{{copyingPrevious || saving}}" bindtap="onUsePreviousBudget">↶ 使用上个月预算</button>
   <view class="card">
     <view class="section-title">月总预算</view>
     <view class="money-input"><text>¥</text><input type="digit" value="{{totalBudget}}" bindinput="onTotalInput" placeholder="请输入预算金额" /></view>

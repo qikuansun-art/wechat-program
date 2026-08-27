@@ -8,116 +8,165 @@
     <view class="toolbar-btn" bindtap="onExport">📤 导出</view>
   </view>
 
-  <!-- 月份切换 + 筛选 -->
-  <view class="month-bar">
-    <view class="month-arrow" bindtap="onPreMonth">‹</view>
-    <view class="month-text">{{yearMonthText}}</view>
-    <view class="month-arrow" bindtap="onNextMonth">›</view>
-    <block wx:if="{{filterOn}}">
-      <view class="filter-clear" bindtap="onClearFilter">清除筛选</view>
-    </block>
-  </view>
-
   <!-- 未绑定提示 -->
   <view class="bind-tip" wx:if="{{notBound}}">
     <text class="bind-tip-icon">💞</text>
     <text class="bind-tip-text">绑定伴侣后，你们就能共用一本「情侣账本」啦</text>
   </view>
 
-  <!-- 月度统计卡片 -->
-  <view class="stat-card" wx:if="{{!notBound}}">
-    <view class="stat-card-head">
-      <text class="stat-label">本期支出</text>
-      <text class="stat-budget-link" bindtap="onEditBudget">{{budget ? '修改预算' : '设置预算'}} ›</text>
-    </view>
-    <view class="stat-main">
-      <view class="stat-expense">¥{{stats.expenseText}}</view>
-    </view>
-    <view class="stat-sub stat-budget-row">
-      <view class="stat-item">
-        <text class="stat-item-label">本月预算</text>
-        <text class="stat-value" wx:if="{{budget}}">¥{{budget.totalBudgetText}}</text>
-        <text class="stat-value stat-placeholder" wx:else>未设置</text>
-      </view>
-      <view class="stat-divider"></view>
-      <view class="stat-item">
-        <text class="stat-item-label">{{budget && budget.status === 'overspent' ? '已超支' : '可用额度'}}</text>
-        <text class="stat-value stat-over" wx:if="{{budget && budget.status === 'overspent'}}">¥{{budget.resultText}}</text>
-        <text class="stat-value" wx:elif="{{budget}}">¥{{budget.resultText}}</text>
-        <text class="stat-value stat-placeholder" wx:else>--</text>
-      </view>
-    </view>
-    <view class="stat-separator"></view>
-    <view class="stat-sub stat-income-row">
-      <view class="stat-item">
-        <text class="stat-item-label">收入</text>
-        <text class="stat-income">+¥{{stats.incomeText}}</text>
-      </view>
-      <view class="stat-divider"></view>
-      <view class="stat-item">
-        <text class="stat-item-label">结余</text>
-        <text class="stat-balance">¥{{stats.balanceText}}</text>
-      </view>
-    </view>
-    <view class="stat-error" wx:if="{{statsError}}">月度汇总暂时加载失败</view>
-  </view>
-
-  <!-- 组合筛选：类型、人员、分类三项相互独立 -->
-  <view class="filter-bar" wx:if="{{!notBound}}">
-    <view class="filter-chip {{filterType === 'all' ? 'active' : ''}}" bindtap="onFilterType" data-type="all">全部</view>
-    <view class="filter-chip {{filterType === 'expense' ? 'active' : ''}}" bindtap="onFilterType" data-type="expense">支出</view>
-    <view class="filter-chip {{filterType === 'income' ? 'active' : ''}}" bindtap="onFilterType" data-type="income">收入</view>
-    <view class="filter-chip {{filterPerson !== 'all' ? 'active' : ''}}" bindtap="onFilterPerson">人员:{{filterPersonText || '全部'}}</view>
-    <picker mode="selector" range="{{filterCategoryOptions}}" range-key="name" bindchange="onFilterCategoryChange">
-      <view class="filter-chip {{filterCategory ? 'active' : ''}}">分类:{{filterCategoryText || '全部'}}</view>
-    </picker>
-  </view>
-
-  <view class="list-error" wx:if="{{listError && filteredList.length === 0}}" bindtap="onRetryList">账单列表加载失败，点击重试</view>
-  <!-- 空状态 -->
-  <view class="empty" wx:if="{{!loading && filteredList.length === 0}}">
-    <view class="empty-icon">🧾</view>
-    <text class="empty-text">没有符合条件的账单</text>
-    <text class="empty-sub">点下方「记一笔」开始记录</text>
-  </view>
-
-  <!-- 账单列表（左滑操作） -->
-  <view class="group" wx:if="{{filteredList.length > 0}}">
-    <view class="group-list">
-      <view class="swipe-action" wx:for="{{filteredList}}" wx:key="id">
-        <!-- 背景操作按钮 -->
-        <view class="swipe-actions">
-          <view class="swipe-btn swipe-btn-edit" wx:if="{{item.mine}}"
-            bindtap="onSwipeEdit" data-id="{{item.id}}">编辑</view>
-          <view class="swipe-btn swipe-btn-del"
-            bindtap="onSwipeDelete" data-id="{{item.id}}">删除</view>
+  <!-- 月份与月度统计共用三页循环 swiper，手势范围仅限红色卡片 -->
+  <swiper class="month-summary-swiper" wx:if="{{!notBound}}" current="{{monthSwiperCurrent}}" duration="{{monthSwiperDuration}}"
+    bindanimationfinish="onMonthSwiperAnimationFinish">
+    <swiper-item wx:for="{{monthSlides}}" wx:key="value">
+      <view class="stat-card">
+        <view class="stat-month-row">
+          <text class="stat-month-arrow" catchtap="onMonthArrowTap" data-direction="-1">‹</text>
+          <text class="stat-month-text">{{item.text}}</text>
+          <text class="stat-month-arrow" catchtap="onMonthArrowTap" data-direction="1">›</text>
         </view>
-        <!-- 内容层（触摸事件驱动滑动） -->
-        <view class="bill-item {{swipedId === item.id ? 'swiped' : ''}}"
-          data-id="{{item.id}}" data-mine="{{item.mine}}"
-          bindtouchstart="onSwipeStart" bindtouchmove="onSwipeMove" bindtouchend="onSwipeEnd">
-          <view class="bill-date-col">
-            <text class="bill-date">{{item.dateShort}}</text>
+        <view class="stat-card-head">
+          <text class="stat-label">本期支出</text>
+          <view class="stat-card-actions">
+            <text class="stat-filter-clear" wx:if="{{filterOn}}" catchtap="onClearFilter">清除筛选</text>
+            <text class="stat-budget-link" catchtap="onEditBudget">{{budget ? '修改预算' : '设置预算'}} ›</text>
           </view>
-          <view class="bill-info">
-            <view class="bill-top">
-              <text class="bill-matter">{{item.matter || '—'}}</text>
-              <text class="bill-cat">{{item.categoryName}}</text>
+        </view>
+        <view class="stat-main"><view class="stat-expense">¥{{stats.expenseText}}</view></view>
+        <view class="stat-sub stat-budget-row">
+          <view class="stat-item">
+            <text class="stat-item-label">本月预算</text>
+            <text class="stat-value" wx:if="{{summaryBudget}}">¥{{summaryBudget.totalBudgetText}}</text>
+            <text class="stat-value stat-placeholder" wx:else>未设置</text>
+          </view>
+          <view class="stat-divider"></view>
+          <view class="stat-item">
+            <text class="stat-item-label">{{summaryBudget && summaryBudget.status === 'overspent' ? '已超支' : '可用额度'}}</text>
+            <text class="stat-value stat-over" wx:if="{{summaryBudget && summaryBudget.status === 'overspent'}}">¥{{summaryBudget.resultText}}</text>
+            <text class="stat-value" wx:elif="{{summaryBudget}}">¥{{summaryBudget.resultText}}</text>
+            <text class="stat-value stat-placeholder" wx:else>--</text>
+          </view>
+        </view>
+        <view class="stat-separator"></view>
+        <view class="stat-sub stat-income-row">
+          <view class="stat-item">
+            <text class="stat-item-label">收入</text>
+            <text class="stat-income">+¥{{stats.incomeText}}</text>
+          </view>
+          <view class="stat-divider"></view>
+          <view class="stat-item">
+            <text class="stat-item-label">结余</text>
+            <text class="stat-balance">¥{{stats.balanceText}}</text>
+          </view>
+        </view>
+        <view class="stat-error" wx:if="{{statsError}}">月度汇总暂时加载失败</view>
+      </view>
+    </swiper-item>
+  </swiper>
+
+  <block wx:if="{{!notBound}}">
+    <view class="bill-sheet-tabs">
+      <view class="bill-sheet-tab {{activeBillSheet === 0 ? 'active' : ''}}" data-index="0" bindtap="onBillSheetTabTap">统计</view>
+      <view class="bill-sheet-tab {{activeBillSheet === 1 ? 'active' : ''}}" data-index="1" bindtap="onBillSheetTabTap">账单</view>
+    </view>
+
+    <swiper class="bill-sheet-swiper {{activeBillSheet === 0 ? 'is-statistics' : 'is-bills'}}" current="{{billSheetCurrent}}" duration="280"
+      bindanimationfinish="onBillSheetAnimationFinish">
+      <swiper-item>
+        <view class="statistics-sheet-content">
+          <view class="budget-progress-card">
+            <view class="budget-table-head">
+              <text class="budget-category-cell">分类</text>
+              <text class="budget-column">预算</text>
+              <view class="budget-progress-cell budget-progress-heading">
+                <text>支出进度</text>
+                <view class="budget-legend">
+                  <text class="legend-dot mine"></text><text>我</text>
+                  <text class="legend-dot partner"></text><text>对方</text>
+                </view>
+              </view>
+              <text class="budget-result-cell">剩余/超支</text>
             </view>
-            <view class="bill-sub" wx:if="{{item.note}}">{{item.note}}</view>
-            <view class="bill-creator">👤 {{item.creatorName}}</view>
-          </view>
-          <view class="bill-amount {{item.type === 'income' ? 'is-income' : 'is-expense'}}">
-            {{item.type === 'income' ? '+' : '-'}}¥{{item.amountText}}
+            <view class="sheet-loading" wx:if="{{statsLoading}}">统计加载中...</view>
+            <view class="sheet-loading sheet-error" wx:elif="{{statsError}}">分类统计暂时加载失败</view>
+            <block wx:else>
+              <view class="budget-category-row" wx:for="{{categoryBudgetRows}}" wx:key="key">
+                <view class="budget-category-cell">
+                  <text class="budget-category-icon">{{item.icon}}</text>
+                  <text class="budget-category-name">{{item.name}}</text>
+                </view>
+                <text class="budget-column">{{item.budgetText}}</text>
+                <view class="budget-progress-cell">
+                  <view class="budget-progress-track {{item.status === 'overspent' ? 'is-overspent' : ''}}">
+                    <view class="budget-progress-segment segment-mine" style="width: {{item.mineWidth}}%;"></view>
+                    <view class="budget-progress-segment segment-partner" style="width: {{item.partnerWidth}}%;"></view>
+                  </view>
+                  <view class="budget-progress-values">
+                    <text class="mine-value">{{item.mineText}}</text>
+                    <text class="partner-value">{{item.partnerText}}</text>
+                  </view>
+                </view>
+                <text class="budget-result-cell {{item.status === 'overspent' ? 'over-value' : ''}}">{{item.resultText}}</text>
+              </view>
+            </block>
           </view>
         </view>
-      </view>
-    </view>
-  </view>
+      </swiper-item>
 
-  <view class="list-footer" wx:if="{{loadingMore}}">加载中...</view>
-  <view class="list-footer" wx:if="{{!hasMore && filteredList.length > 0 && !loading}}">没有更多了</view>
-  <view class="pagination-sentinel" aria-hidden="true"></view>
+      <swiper-item>
+        <scroll-view class="bill-sheet-scroll" scroll-y enhanced show-scrollbar="{{false}}" lower-threshold="120" bindscrolltolower="loadMore">
+          <!-- 组合筛选：只影响账单 Sheet -->
+          <view class="filter-bar">
+            <view class="filter-chip {{filterType === 'all' ? 'active' : ''}}" bindtap="onFilterType" data-type="all">全部</view>
+            <view class="filter-chip {{filterType === 'expense' ? 'active' : ''}}" bindtap="onFilterType" data-type="expense">支出</view>
+            <view class="filter-chip {{filterType === 'income' ? 'active' : ''}}" bindtap="onFilterType" data-type="income">收入</view>
+            <view class="filter-chip {{filterPerson !== 'all' ? 'active' : ''}}" bindtap="onFilterPerson">人员:{{filterPersonText || '全部'}}</view>
+            <picker mode="selector" range="{{filterCategoryOptions}}" range-key="name" bindchange="onFilterCategoryChange">
+              <view class="filter-chip {{filterCategory ? 'active' : ''}}">分类:{{filterCategoryText || '全部'}}</view>
+            </picker>
+          </view>
+
+          <view class="list-error" wx:if="{{listError && filteredList.length === 0}}" bindtap="onRetryList">账单列表加载失败，点击重试</view>
+          <view class="empty" wx:if="{{!loading && filteredList.length === 0}}">
+            <view class="empty-icon">🧾</view>
+            <text class="empty-text">没有符合条件的账单</text>
+            <text class="empty-sub">点下方「记一笔」开始记录</text>
+          </view>
+
+          <view class="group" wx:if="{{filteredList.length > 0}}">
+            <view class="group-list">
+              <view class="swipe-action" wx:for="{{filteredList}}" wx:key="id">
+                <view class="swipe-actions">
+                  <view class="swipe-btn swipe-btn-edit" wx:if="{{item.mine}}"
+                    bindtap="onSwipeEdit" data-id="{{item.id}}">编辑</view>
+                  <view class="swipe-btn swipe-btn-del"
+                    bindtap="onSwipeDelete" data-id="{{item.id}}">删除</view>
+                </view>
+                <view class="bill-item {{swipedId === item.id ? 'swiped' : ''}}"
+                  data-id="{{item.id}}" data-mine="{{item.mine}}"
+                  bindtouchstart="onSwipeStart" bindtouchmove="onSwipeMove" bindtouchend="onSwipeEnd">
+                  <view class="bill-date-col"><text class="bill-date">{{item.dateShort}}</text></view>
+                  <view class="bill-info">
+                    <view class="bill-top">
+                      <text class="bill-matter">{{item.matter || '—'}}</text>
+                      <text class="bill-cat">{{item.categoryName}}</text>
+                    </view>
+                    <view class="bill-sub" wx:if="{{item.note}}">{{item.note}}</view>
+                    <view class="bill-creator">👤 {{item.creatorName}}</view>
+                  </view>
+                  <view class="bill-amount {{item.type === 'income' ? 'is-income' : 'is-expense'}}">
+                    {{item.type === 'income' ? '+' : '-'}}¥{{item.amountText}}
+                  </view>
+                </view>
+              </view>
+            </view>
+          </view>
+          <view class="list-footer" wx:if="{{loadingMore}}">加载中...</view>
+          <view class="list-footer" wx:if="{{!hasMore && filteredList.length > 0 && !loading}}">没有更多了</view>
+          <view class="pagination-sentinel" aria-hidden="true"></view>
+        </scroll-view>
+      </swiper-item>
+    </swiper>
+  </block>
 
   <!-- 固定记一笔入口 -->
   <view class="add-fab" bindtap="onAdd">＋ 记一笔</view>

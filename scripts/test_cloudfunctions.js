@@ -1389,6 +1389,8 @@ function assert(cond, msg) {
   const billWxml = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.wxml'), 'utf8');
   const billWxss = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.wxss'), 'utf8');
   const billJs = fs.readFileSync(path.join(__dirname, '..', 'pages', 'bill', 'bill.js'), 'utf8');
+  const sharedBillCategories = require('../utils/bill-categories');
+  const budgetRowUtils = require('../utils/bill-budget-rows');
   assert((billWxml.match(/bindtap="onAdd"/g) || []).length === 1 && billWxml.includes('class="add-fab"'),
     '账单入口：原底部重复入口已移除，悬浮按钮仍绑定 onAdd');
   assert(/\.add-fab\s*\{[^}]*position:\s*fixed;/s.test(billWxss) && /safe-area-inset-bottom/.test(billWxss),
@@ -1408,9 +1410,44 @@ function assert(cond, msg) {
 
   const budgetEditJs = fs.readFileSync(path.join(__dirname, '..', 'pages/budget-edit/budget-edit.js'), 'utf8');
   const budgetEditWxml = fs.readFileSync(path.join(__dirname, '..', 'pages/budget-edit/budget-edit.wxml'), 'utf8');
+  const budgetEditWxss = fs.readFileSync(path.join(__dirname, '..', 'pages/budget-edit/budget-edit.wxss'), 'utf8');
+  const budgetCopyUtils = require('../utils/bill-budget-copy');
   assert(appConfig.pages.includes('pages/budget-edit/budget-edit') && !appConfig.tabBar.list.some((item) => item.pagePath === 'pages/budget-edit/budget-edit'), '账单 V2 预算：预算编辑页已注册且不是 TabBar 页面');
   assert(billJs.includes('Promise.allSettled') && billJs.includes('loadBillFirstPage(version)') && billJs.includes('loadBillStats(version)'),
     '账单 V2 首次加载：第一页与完整统计并行且独立结算');
+  assert(billWxss.includes('.month-summary-swiper { height: 376rpx; }') &&
+    /\.stat-card\s*\{[^}]*margin:\s*6rpx 24rpx;[^}]*padding:\s*12rpx 36rpx 17rpx;/s.test(billWxss) &&
+    billWxss.includes('.stat-expense {') && billWxss.includes('font-size: 64rpx;') &&
+    billWxml.includes('bindanimationfinish="onMonthSwiperAnimationFinish"'),
+    '账单红卡二次压缩：仅收紧纵向高度和 padding，主金额字号及三屏月份 swiper 保持不变');
+  assert(budgetEditWxml.includes('使用上个月预算') && budgetEditWxml.includes('bindtap="onUsePreviousBudget"') &&
+    budgetEditWxss.includes('.copy-previous-btn') && budgetEditJs.includes("name: 'getBillStats'") &&
+    budgetEditJs.includes('data: { yearMonth: previousMonth }'),
+    '预算复制入口：预算编辑页使用轻量按钮并复用 getBillStats 读取真实上月预算');
+  assert(budgetCopyUtils.previousMonth('2026-09') === '2026-08' &&
+    budgetCopyUtils.previousMonth('2026-01') === '2025-12',
+    '预算复制月份：普通月份和跨年上个月计算正确');
+  const fullCopiedBudget = budgetCopyUtils.buildCopiedForm({
+    totalBudget: 7000,
+    categoryBudgets: { food: 3600, shopping: 1000, house: 1500, gift: 100, legacy: 999 }
+  });
+  const totalOnlyCopiedBudget = budgetCopyUtils.buildCopiedForm({ totalBudget: 8000, categoryBudgets: {} });
+  const partialCopiedBudget = budgetCopyUtils.buildCopiedForm({ totalBudget: 0, categoryBudgets: { food: 0, transport: 24 } });
+  assert(fullCopiedBudget.totalBudget === '7000' && fullCopiedBudget.categoryBudgets.food === '3600' &&
+    fullCopiedBudget.categoryBudgets.gift === '100' && !Object.prototype.hasOwnProperty.call(fullCopiedBudget.categoryBudgets, 'legacy') &&
+    Object.keys(totalOnlyCopiedBudget.categoryBudgets).length === 0 &&
+    partialCopiedBudget.totalBudget === '0' && partialCopiedBudget.categoryBudgets.food === '0' &&
+    budgetCopyUtils.buildCopiedForm(null) === null,
+    '预算复制字段：支持完整/仅总额/部分/预算0，且未知旧分类和无预算分别忽略与返回空');
+  assert(budgetEditJs.includes("title: '使用上个月预算？'") &&
+    budgetEditJs.includes('覆盖当前页面已填写的预算内容，但不会立即保存') &&
+    /onUsePreviousBudget\(\)[\s\S]{0,1800}if \(confirmed\) this\.fillBudget\(previousBudget\)/.test(budgetEditJs) &&
+    !/onUsePreviousBudget\(\)[\s\S]{0,1800}saveBillBudget/.test(budgetEditJs),
+    '预算复制交互：已有内容明确二次确认，确认后只填表且不会自动调用保存接口');
+  assert(/onUsePreviousBudget\(\)[\s\S]{0,500}copyingPrevious[\s\S]{0,500}getBillStats/.test(budgetEditJs) &&
+    !/onUsePreviousBudget\(\)[\s\S]{0,1800}(pairKey|memberIds)/.test(budgetEditJs) &&
+    budgetEditJs.includes("util.toast('上个月没有设置预算')"),
+    '预算复制安全：读取期间防重复、不接受客户端 pairKey，且上月无预算不会修改表单');
   assert(billJs.includes('loadingMore || !this.data.hasMore') && billJs.includes('this.data.page + 1'),
     '账单 V2 分页：loadingMore 防重且 hasMore=false 停止请求');
   assert(billJs.includes('`filteredList[${startIndex + index}]`') && !billJs.includes('filteredList: this.data.filteredList.concat'),
@@ -1428,10 +1465,82 @@ function assert(cond, msg) {
     !billJs.includes('onDimChange') && !billJs.includes('buildDimList') && !billWxss.includes('.dim-tab'),
     '账单组合筛选：旧统计维度 UI、事件和样式已完整删除');
   assert(!billWxml.includes('class="budget-card"') && billWxml.includes('本月预算') && billWxml.includes('未设置') &&
-    billWxml.includes("budget.status === 'overspent'") && billWxml.includes('budget.resultText'),
+    billWxml.includes("summaryBudget.status === 'overspent'") && billWxml.includes('summaryBudget.resultText'),
     '账单 V2 汇总卡：预算并入粉色卡片且区分未设置、可用与超支');
+  assert(!billWxml.includes('class="month-bar"') && !billWxss.includes('.month-bar') &&
+    billWxml.includes('class="month-summary-swiper"') && billWxml.includes('wx:for="{{monthSlides}}"') &&
+    billWxml.includes('bindanimationfinish="onMonthSwiperAnimationFinish"'),
+    '账单月份入口：独立月份行彻底删除，月份与整张红色汇总卡合并为原生 swiper');
+  assert(billJs.includes('return [-1, 0, 1].map') && billJs.includes('monthSwiperCurrent: 1') &&
+    billJs.includes('onPreMonth() { this.requestMonthChange(-1); }') &&
+    billJs.includes('onNextMonth() { this.requestMonthChange(1); }') &&
+    /onMonthSwiperAnimationFinish\(e\)[\s\S]{0,300}this\.changeMonth\(index === 0 \? -1 : 1\)/.test(billJs),
+    '账单月份 swiper：只循环复用上一月/当前月/下一月，箭头与左右滑动共用统一切月入口');
+  assert(billJs.includes('monthSwiperDuration: 0') && billJs.includes('monthSwiperDuration: 280') &&
+    billJs.includes('this.refreshView({ preserveData: true })') &&
+    billJs.includes('const preserveData = !!options.preserveData') &&
+    (billJs.match(/version !== this\._billViewVersion/g) || []).length >= 4,
+    '账单月份 swiper：滑动完成后无动画复位到中间项，保留旧数据显示并用 viewVersion 拒绝过期月份响应');
+  assert(billWxml.includes('class="stat-month-arrow" catchtap="onMonthArrowTap" data-direction="-1"') &&
+    billWxml.includes('class="stat-month-arrow" catchtap="onMonthArrowTap" data-direction="1"') &&
+    billWxml.includes('class="bill-sheet-swiper') &&
+    billWxml.includes('bindanimationfinish="onBillSheetAnimationFinish"'),
+    '账单双 swiper：红卡区域只切月份，下方统计/账单区域仍由独立 swiper 切换 Sheet');
+  const shiftBillMonth = (yearMonth, delta) => {
+    const [year, month] = yearMonth.split('-').map(Number);
+    return `${new Date(year, month - 1 + delta, 1).getFullYear()}-${String(new Date(year, month - 1 + delta, 1).getMonth() + 1).padStart(2, '0')}`;
+  };
+  assert(shiftBillMonth('2026-01', -1) === '2025-12' && shiftBillMonth('2026-12', 1) === '2027-01' &&
+    billJs.includes('new Date(year, month - 1 + delta, 1)'),
+    '账单月份 swiper：上一月和下一月按现有方向切换，并正确处理双向跨年');
+  assert(billWxml.includes('onDownloadTemplate') && billWxml.includes('onImport') && billWxml.includes('onExport') &&
+    billWxml.includes('stat-filter-clear') && billJs.includes('type: filterType') &&
+    billJs.includes('person: filterPerson') && billJs.includes('category: filterCategory'),
+    '账单月份 swiper：模板/导入/导出和现有 type/person/category 筛选语义保持不变');
   assert(budgetEditJs.includes('billCategories.EXPENSE_CATEGORIES') && !budgetEditJs.includes("key: 'food'"),
     '账单 V2 预算编辑：复用统一支出分类定义');
+  assert(sharedBillCategories.EXPENSE_CATEGORIES.every((item) => item.type === 'expense') &&
+    sharedBillCategories.INCOME_CATEGORIES.every((item) => item.type === 'income') &&
+    billJs.includes('billCategories.EXPENSE_CATEGORIES') && billJs.includes('billCategories.INCOME_CATEGORIES'),
+    '账单分类统一：录入、筛选和预算展示共用带 key/name/icon/type/order 的配置');
+  assert(billWxml.includes('class="bill-sheet-tabs"') && billWxml.includes('>统计</view>') &&
+    billWxml.includes('>账单</view>') && billWxml.includes('bindanimationfinish="onBillSheetAnimationFinish"') &&
+    billJs.includes('onBillSheetTabTap(e)') && billJs.includes('onBillSheetAnimationFinish(e)') &&
+    !/onBillSheet(TabTap|AnimationFinish)[\s\S]{0,280}(loadBillFirstPage|loadBillStats)/.test(billJs),
+    '账单双 Sheet：原生 swiper 支持点击和手势切换，动画完成同步状态且切换不重新请求');
+  assert(billWxml.includes('支出进度') && billWxml.includes('segment-mine') &&
+    billWxml.includes('segment-partner') && !billWxml.includes('budget-over-mark') &&
+    !billWxss.includes('.budget-over-mark') && !billWxss.includes('repeating-linear-gradient') &&
+    !billWxml.includes('{{item.percent}}'),
+    '账单统计 Sheet：使用蓝粉双人预算进度和灰色剩余，超支仅由右侧红色文字表达且不显示百分比或斜纹标记');
+  assert(sharedBillCategories.EXPENSE_CATEGORIES.length === 8 &&
+    billWxml.includes('class="budget-table-head"') &&
+    billWxml.includes('class="budget-column">{{item.budgetText}}') &&
+    !billWxml.includes('预算 {{item.budgetText}}'),
+    '账单统计表格布局：仍渲染8个支出分类，预算使用独立对齐列且不再混入分类标题');
+  assert(/budget-progress-values[\s\S]{0,220}\{\{item\.mineText\}\}[\s\S]{0,160}\{\{item\.partnerText\}\}/.test(billWxml) &&
+    billWxml.includes('{{item.resultText}}') &&
+    !billWxml.includes('我 {{item.mineText}}') && !billWxml.includes('对方 {{item.partnerText}}') &&
+    /\.budget-category-row\s*\{[^}]*min-height:\s*80rpx;[^}]*padding:\s*4rpx 0;/s.test(billWxss) &&
+    /\.budget-category-name\s*\{[^}]*font-size:\s*24rpx;/s.test(billWxss) &&
+    /\.budget-column\s*\{[^}]*font-size:\s*22rpx;/s.test(billWxss) &&
+    /\.budget-result-cell\s*\{[^}]*font-size:\s*22rpx;/s.test(billWxss) &&
+    billWxss.includes('.budget-table-head .budget-result-cell { font-size: 20rpx; }') &&
+    /\.budget-progress-values\s*\{[^}]*margin-top:\s*5rpx;[^}]*font-size:\s*22rpx;/s.test(billWxss),
+    '账单统计紧凑布局：表头统一标识双方，行内金额恢复正常可读字号，剩余/超支独立对齐且行高约88rpx');
+  assert((billWxss.match(/grid-template-columns:\s*92rpx 92rpx minmax\(0, 1fr\) 150rpx;/g) || []).length === 2 &&
+    (billWxss.match(/column-gap:\s*14rpx;/g) || []).length === 2 &&
+    /\.budget-progress-card\s*\{[^}]*padding:\s*10rpx 18rpx 8rpx;/s.test(billWxss) &&
+    /\.budget-result-cell\s*\{[^}]*text-align:\s*right;[^}]*white-space:\s*nowrap;/s.test(billWxss),
+    '账单统计横向布局：表头和数据行共用四列 Grid、14rpx 列间距，右侧长金额保持单行右对齐');
+  assert(billWxml.includes('class="statistics-sheet-content"') &&
+    !/<scroll-view[^>]*statistics-sheet-content/.test(billWxml) &&
+    billWxss.includes('.bill-sheet-swiper.is-statistics { height: 814rpx; }') &&
+    billWxss.includes('.bill-sheet-swiper.is-bills { height: 980rpx; }'),
+    '账单统计高度：统计 Sheet 移除独立纵向 scroll-view，并与长列表账单 Sheet 分别管理高度');
+  assert(billWxml.includes('class="stat-card"') && billWxml.includes('本期支出') &&
+    billWxml.includes('本月预算') && billWxml.includes('收入') && billWxml.includes('结余'),
+    '账单顶部红色汇总卡：原有结构和核心内容保持不变');
   assert(budgetEditJs.includes("name: 'saveBillBudget'") && budgetEditJs.includes('data: payload') &&
     !budgetEditJs.includes('pairKey') && !budgetEditJs.includes('memberIds'),
     '账单 V2 预算保存：只提交允许字段');
@@ -1497,6 +1606,92 @@ function assert(cond, msg) {
     '账单筛选统计：同一次整月聚合派生筛选统计，预算始终使用整月支出');
   assert(billJs.includes("else if (this._budgetDirty) {\n      this._budgetDirty = false;\n      this.loadBillStats(this._billViewVersion);"),
     '账单 V2 预算刷新：只刷新统计且不会用零值重置列表或月度汇总');
+
+  const expenseKeys = sharedBillCategories.EXPENSE_CATEGORIES.map((item) => item.key);
+  const billSummaryUtils = require('../utils/bill-summary');
+  const summaryBudgetFixture = {
+    totalBudget: 7000,
+    totalExpense: 5300,
+    availableAmount: 1700,
+    overspentAmount: 0,
+    status: 'available',
+    categoryBudgets: { food: 3600, shopping: 5002, transport: 0 }
+  };
+  const allSummary = billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'all', category: '' }, 5300);
+  const foodSummary = billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'food' }, 2500);
+  const shoppingSummary = billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'all', category: 'shopping' }, 5002);
+  const foodOverSummary = billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'food' }, 7274.28);
+  const zeroSummary = billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'transport' }, 24);
+  const unsetSummary = billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'gift' }, 10);
+  assert(allSummary === summaryBudgetFixture && allSummary.totalBudget === 7000 && allSummary.availableAmount === 1700,
+    '账单顶部分类汇总：全部分类继续使用整月总预算和整月可用额度');
+  assert(foodSummary.totalBudget === 3600 && foodSummary.totalExpense === 2500 && foodSummary.availableAmount === 1100 &&
+    shoppingSummary.totalBudget === 5002 && shoppingSummary.totalExpense === 5002 && shoppingSummary.availableAmount === 0,
+    '账单顶部分类汇总：餐饮和购物分别使用对应分类预算，支持正常剩余和刚好用完');
+  assert(foodOverSummary.status === 'overspent' && foodOverSummary.overspentAmount === 3674.28 &&
+    zeroSummary.totalBudget === 0 && zeroSummary.overspentAmount === 24 && unsetSummary === null,
+    '账单顶部分类汇总：分类超支、预算0和预算未设置保持不同语义');
+  assert(billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'food', person: 'mine' }, 400).totalBudget === 3600 &&
+    billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'income', category: 'salary' }, 0) === summaryBudgetFixture,
+    '账单顶部分类汇总：人员筛选不产生个人预算，收入分类保持既有月度预算语义');
+  const switchedSummaries = [
+    billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'all', category: '' }, 5300),
+    billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'food' }, 2500),
+    billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'expense', category: 'shopping' }, 3486.23),
+    billSummaryUtils.buildSummaryBudget(summaryBudgetFixture, { type: 'all', category: '' }, 5300)
+  ];
+  assert(switchedSummaries.map((item) => item.totalBudget).join(',') === '7000,3600,5002,7000' &&
+    switchedSummaries.map((item) => item.totalExpense).join(',') === '5300,2500,3486.23,5300',
+    '账单顶部分类汇总：全部→餐饮→购物→全部连续切换时三项口径随当前响应同步恢复且不残留');
+  const summaryRows = budgetRowUtils.buildCategoryBudgetRows({ categoryStats: [] }, summaryBudgetFixture);
+  assert(summaryRows.find((item) => item.key === 'food').budget === foodSummary.totalBudget &&
+    summaryRows.find((item) => item.key === 'shopping').budget === shoppingSummary.totalBudget,
+    '账单顶部分类汇总：具体分类预算与统计 Sheet 使用同一份 categoryBudgets 数据');
+  assert(billJs.includes('billSummary.buildSummaryBudget(result.budget') &&
+    billJs.includes('}, stats.expense)') && billWxml.includes('summaryBudget.totalBudgetText') &&
+    !/stat-budget-row[\s\S]{0,900}budget\.totalBudgetText/.test(billWxml),
+    '账单顶部分类汇总：支出、预算和剩余统一由当前分类汇总派生且不再直接展示整月预算');
+  const budgetCategoryKeys = budgetEditJs.includes('billCategories.EXPENSE_CATEGORIES') ? expenseKeys : [];
+  assert(deepEqual(budgetCategoryKeys, expenseKeys) && sharedBillCategories.EXPENSE_CATEGORIES.every((item) => item.name && item.icon),
+    '账单分类一致：预算页与账单实际支出分类 key、名称、图标和顺序完全一致');
+  const normalRows = budgetRowUtils.buildCategoryBudgetRows({ categoryStats: [
+    { category: 'food', mineExpense: 400, partnerExpense: 200 },
+    { category: 'transport', mineExpense: 10, partnerExpense: 20 }
+  ] }, { categoryBudgets: { food: 1000, transport: 50 } });
+  const foodNormal = normalRows.find((item) => item.key === 'food');
+  const transportNormal = normalRows.find((item) => item.key === 'transport');
+  assert(foodNormal.mineWidth === '40.00' && foodNormal.partnerWidth === '20.00' && foodNormal.remainingText === '剩余 ¥400' &&
+    foodNormal.budgetText === '¥1,000' && transportNormal.remainingText === '剩余 ¥20',
+    '分类预算进度：双方支出小于预算时按预算分段并显示实际剩余金额');
+  const edgeRows = budgetRowUtils.buildCategoryBudgetRows({ categoryStats: [
+    { category: 'food', mineExpense: 900, partnerExpense: 300 },
+    { category: 'other', mineExpense: 700, partnerExpense: 200 },
+    { category: 'medical', mineExpense: 20, partnerExpense: 10 },
+    { category: 'gift', mineExpense: 0, partnerExpense: 0 },
+    { category: 'house', mineExpense: 50, partnerExpense: 0 },
+    { category: 'shopping', mineExpense: 0, partnerExpense: 40 }
+  ] }, { categoryBudgets: { food: 1000, medical: 0, transport: 0, gift: 100, house: 50, shopping: 100 } });
+  const foodOver = edgeRows.find((item) => item.key === 'food');
+  const unsetOther = edgeRows.find((item) => item.key === 'other');
+  const zeroMedical = edgeRows.find((item) => item.key === 'medical');
+  const zeroEmptyTransport = edgeRows.find((item) => item.key === 'transport');
+  const emptyGift = edgeRows.find((item) => item.key === 'gift');
+  assert(foodOver.status === 'overspent' && foodOver.mineWidth === '75.00' && foodOver.partnerWidth === '25.00' && foodOver.overText === '超支 ¥200' &&
+    zeroMedical.status === 'overspent' && zeroMedical.overText === '超支 ¥30' &&
+    zeroEmptyTransport.status === 'normal' && zeroEmptyTransport.budgetText === '¥0' &&
+    unsetOther.status === 'unset' && unsetOther.budgetText === '--' && !unsetOther.remainingText && !unsetOther.overText &&
+    emptyGift.status === 'normal' && emptyGift.remainingText === '剩余 ¥100' &&
+    edgeRows.find((item) => item.key === 'house').status === 'full',
+    '分类预算边界：超支按双方占比分满主条，budget=0、未设置和双方为0分别正确处理');
+  assert(edgeRows.find((item) => item.key === 'house').partnerWidth === '0.00' &&
+    edgeRows.find((item) => item.key === 'shopping').mineWidth === '0.00' &&
+    deepEqual(edgeRows.map((item) => item.key), expenseKeys) &&
+    budgetRowUtils.formatMoneyCompact(1500) === '1,500' &&
+    budgetRowUtils.formatMoneyCompact(30.5) === '30.5' && budgetRowUtils.formatMoneyCompact(5304.85) === '5,304.85',
+    '分类预算展示：单人支出不占另一人长度，严格按统一分类配置顺序且金额最多两位小数并保留千分位');
+  assert(foodNormal.resultText === '¥400' && foodOver.resultText === '超支 ¥200' &&
+    unsetOther.resultText === '--' && zeroEmptyTransport.resultText === '¥0',
+    '分类预算结果列：正常显示剩余金额、超预算显示超支、未设置显示--、预算0且未支出显示¥0');
 
   // ---------- 记账 ----------
   console.log('\n== 记账（共享账本） ==');
@@ -1635,6 +1830,9 @@ function assert(cond, msg) {
   assert(statsBeforeBudget.stats.categoryStats.reduce((sum, item) => sum + item.amount, 0) === 904 &&
     statsBeforeBudget.stats.peopleStats.reduce((sum, item) => sum + item.count, 0) === 1005,
     '账单 V2 统计：分类和人员聚合覆盖完整月份，不依赖 getBills 第一页');
+  assert(statsBeforeBudget.stats.categoryStats.every((item) =>
+    item.totalExpense === item.amount && item.mineExpense + item.partnerExpense === item.totalExpense),
+  '账单分类双人统计：服务端按真实双方身份拆分 mineExpense/partnerExpense，且仍覆盖完整月份');
   const filteredJuneStats = await callAs(A, 'getBillStats', {
     yearMonth: '2026-06', type: 'expense', person: 'partner', category: 'other'
   });

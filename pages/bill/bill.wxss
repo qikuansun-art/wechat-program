@@ -26,46 +26,6 @@
   background: #FFF0F2;
 }
 
-/* 月份切换 */
-.month-bar {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 24rpx 0 8rpx;
-  position: relative;
-}
-.month-arrow {
-  width: 72rpx;
-  height: 72rpx;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 44rpx;
-  color: #666;
-  background: #f7f7f7;
-  border-radius: 50%;
-}
-.month-arrow:active {
-  background: #ffe8ec;
-  color: #FF6B81;
-}
-.month-text {
-  min-width: 240rpx;
-  text-align: center;
-  font-size: 34rpx;
-  font-weight: 600;
-  color: #333;
-}
-.filter-clear {
-  position: absolute;
-  right: 24rpx;
-  font-size: 24rpx;
-  color: #FF6B81;
-  background: #FFF0F2;
-  padding: 6rpx 16rpx;
-  border-radius: 20rpx;
-}
-
 /* 未绑定提示 */
 .bind-tip {
   display: flex;
@@ -87,17 +47,44 @@
 }
 
 /* 统计卡片 */
+.month-summary-swiper { height: 376rpx; }
 .stat-card {
-  margin: 16rpx 24rpx;
+  margin: 6rpx 24rpx;
   background: linear-gradient(135deg, #FF6B81 0%, #FF8E9F 100%);
   border-radius: 24rpx;
-  padding: 40rpx 36rpx;
+  padding: 12rpx 36rpx 17rpx;
   color: #fff;
   box-shadow: 0 8rpx 24rpx rgba(255, 107, 129, 0.25);
 }
 
+.stat-month-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 36rpx;
+  margin-bottom: 2rpx;
+}
+.stat-month-arrow {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48rpx;
+  height: 36rpx;
+  color: rgba(255, 255, 255, .72);
+  font-size: 34rpx;
+  font-weight: 400;
+}
+.stat-month-text { color: #fff; font-size: 28rpx; font-weight: 600; }
 .stat-card-head { display: flex; align-items: center; justify-content: space-between; }
-.stat-budget-link { padding: 8rpx 0 8rpx 24rpx; font-size: 23rpx; color: rgba(255, 255, 255, .92); }
+.stat-card-actions { display: flex; align-items: center; }
+.stat-filter-clear {
+  padding: 4rpx 12rpx;
+  border: 1rpx solid rgba(255, 255, 255, .42);
+  border-radius: 18rpx;
+  color: rgba(255, 255, 255, .9);
+  font-size: 20rpx;
+}
+.stat-budget-link { padding: 4rpx 0 4rpx 24rpx; font-size: 23rpx; color: rgba(255, 255, 255, .92); }
 .stat-label {
   font-size: 26rpx;
   opacity: 0.9;
@@ -105,7 +92,7 @@
 .stat-expense {
   font-size: 64rpx;
   font-weight: 700;
-  margin-top: 8rpx;
+  margin-top: 4rpx;
   letter-spacing: 1rpx;
 }
 .stat-sub {
@@ -113,12 +100,12 @@
   align-items: center;
   margin-top: 28rpx;
 }
-.stat-budget-row { margin-top: 30rpx; }
-.stat-income-row { margin-top: 22rpx; }
-.stat-value { margin-top: 6rpx; font-size: 30rpx; font-weight: 600; }
+.stat-budget-row { margin-top: 14rpx; }
+.stat-income-row { margin-top: 10rpx; }
+.stat-value { margin-top: 4rpx; font-size: 30rpx; font-weight: 600; }
 .stat-placeholder { color: rgba(255, 255, 255, .76); font-size: 27rpx; }
 .stat-over { color: #FFF2B8; }
-.stat-separator { height: 1rpx; margin-top: 24rpx; background: rgba(255, 255, 255, .22); }
+.stat-separator { height: 1rpx; margin-top: 10rpx; background: rgba(255, 255, 255, .22); }
 .stat-error { margin-top: 20rpx; font-size: 22rpx; color: rgba(255, 255, 255, .82); }
 .stat-item {
   flex: 1;
@@ -132,12 +119,12 @@
 .stat-income {
   font-size: 30rpx;
   font-weight: 600;
-  margin-top: 6rpx;
+  margin-top: 4rpx;
 }
 .stat-balance {
   font-size: 30rpx;
   font-weight: 600;
-  margin-top: 6rpx;
+  margin-top: 4rpx;
 }
 .stat-divider {
   width: 2rpx;
@@ -145,6 +132,124 @@
   background: rgba(255, 255, 255, 0.35);
   margin: 0 24rpx;
 }
+
+/* 红色汇总卡以下：统计 / 账单双 Sheet */
+.bill-sheet-tabs {
+  display: flex;
+  margin: 22rpx 24rpx 10rpx;
+  padding: 6rpx;
+  background: #fff;
+  border-radius: 24rpx;
+}
+.bill-sheet-tab {
+  flex: 1;
+  height: 64rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 20rpx;
+  color: #8c8c8c;
+  font-size: 27rpx;
+  font-weight: 500;
+  transition: color .2s ease, background .2s ease;
+}
+.bill-sheet-tab.active {
+  color: #ff607a;
+  background: #fff0f3;
+  font-weight: 600;
+}
+.bill-sheet-swiper { transition: height .2s ease; }
+.bill-sheet-swiper.is-statistics { height: 814rpx; }
+.bill-sheet-swiper.is-bills { height: 980rpx; }
+.bill-sheet-scroll { height: 100%; }
+.statistics-sheet-content { height: auto; }
+
+.budget-progress-card {
+  margin: 10rpx 24rpx 18rpx;
+  padding: 10rpx 18rpx 8rpx;
+  background: #fff;
+  border-radius: 24rpx;
+}
+.budget-table-head {
+  display: grid;
+  grid-template-columns: 92rpx 92rpx minmax(0, 1fr) 150rpx;
+  column-gap: 14rpx;
+  align-items: center;
+  min-height: 42rpx;
+  color: #aaa;
+  font-size: 20rpx;
+}
+.budget-table-head .budget-column,
+.budget-table-head .budget-result-cell { font-size: 20rpx; }
+.budget-progress-heading { display: flex; align-items: center; justify-content: space-between; }
+.budget-legend { display: flex; align-items: center; color: #999; font-size: 18rpx; }
+.legend-dot { width: 9rpx; height: 9rpx; margin: 0 3rpx 0 7rpx; border-radius: 50%; }
+.legend-dot.mine { background: #6d9df5; }
+.legend-dot.partner { background: #ff8faa; }
+.sheet-loading { padding: 90rpx 0; text-align: center; color: #aaa; font-size: 24rpx; }
+.sheet-error { color: #ff6b81; }
+.budget-category-row {
+  display: grid;
+  grid-template-columns: 92rpx 92rpx minmax(0, 1fr) 150rpx;
+  column-gap: 14rpx;
+  align-items: center;
+  min-height: 80rpx;
+  padding: 4rpx 0;
+  border-top: 1rpx solid #f5f5f5;
+}
+.budget-category-cell {
+  display: flex;
+  align-items: center;
+  gap: 6rpx;
+  min-width: 0;
+  overflow: hidden;
+}
+.budget-category-icon {
+  width: 38rpx;
+  flex-shrink: 0;
+  font-size: 27rpx;
+}
+.budget-category-name { overflow: hidden; color: #4b4b4b; font-size: 24rpx; font-weight: 500; white-space: nowrap; }
+.budget-column {
+  min-width: 0;
+  color: #777;
+  font-size: 22rpx;
+  text-align: left;
+  white-space: nowrap;
+}
+.budget-progress-cell {
+  min-width: 0;
+}
+.budget-progress-track {
+  position: relative;
+  display: flex;
+  width: 100%;
+  height: 14rpx;
+  overflow: visible;
+  background: #edf0f4;
+  border-radius: 9rpx;
+}
+.budget-progress-segment { height: 14rpx; flex-shrink: 0; }
+.segment-mine { background: #6d9df5; border-radius: 9rpx 0 0 9rpx; }
+.segment-partner { background: #ff8faa; border-radius: 0 9rpx 9rpx 0; }
+.budget-progress-values {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 5rpx;
+  font-size: 22rpx;
+  line-height: 1.15;
+}
+.mine-value { color: #5787df; }
+.partner-value { color: #e87391; }
+.budget-result-cell {
+  min-width: 0;
+  color: #9aa0a8;
+  font-size: 22rpx;
+  text-align: right;
+  white-space: nowrap;
+}
+.over-value { color: #d93f56; font-weight: 600; }
 
 /* 筛选条 */
 .filter-bar {

@@ -74,9 +74,10 @@ function buildBudget(record, expense, categoryExpense) {
   };
 }
 
-function buildStats(yearMonth, groups, memberIds, usersById) {
+function buildStats(yearMonth, groups, memberIds, usersById, meId, partnerId) {
   let expense = 0, income = 0, count = 0;
   const categoryExpense = {};
+  const categoryPeople = {};
   const peopleMap = {};
   memberIds.forEach((id) => {
     const user = usersById[id] || {};
@@ -97,12 +98,20 @@ function buildStats(yearMonth, groups, memberIds, usersById) {
       expense += amount;
       peopleMap[creatorId].expense += amount;
       categoryExpense[category] = (categoryExpense[category] || 0) + amount;
+      if (!categoryPeople[category]) categoryPeople[category] = { mineExpense: 0, partnerExpense: 0 };
+      if (creatorId === meId) categoryPeople[category].mineExpense += amount;
+      else if (creatorId === partnerId) categoryPeople[category].partnerExpense += amount;
     }
   });
   expense = money(expense);
   income = money(income);
   const categoryStats = Object.keys(categoryExpense).map((category) => ({
-    category, amount: money(categoryExpense[category]), percent: expense ? Math.round(categoryExpense[category] / expense * 100) : 0
+    category,
+    amount: money(categoryExpense[category]),
+    totalExpense: money(categoryExpense[category]),
+    mineExpense: money(categoryPeople[category] && categoryPeople[category].mineExpense),
+    partnerExpense: money(categoryPeople[category] && categoryPeople[category].partnerExpense),
+    percent: expense ? Math.round(categoryExpense[category] / expense * 100) : 0
   })).sort((a, b) => b.amount - a.amount);
   const peopleStats = Object.values(peopleMap).map((item) => ({
     creatorId: item.creatorId, creatorName: item.creatorName, expense: money(item.expense),
@@ -150,7 +159,7 @@ exports.main = async (event = {}) => {
       };
     });
     const usersById = { [auth.me._id]: auth.me, [auth.partner._id]: auth.partner };
-    const monthStats = buildStats(yearMonth, parsedGroups, memberIds, usersById);
+    const monthStats = buildStats(yearMonth, parsedGroups, memberIds, usersById, auth.me._id, auth.partner._id);
     const monthCategoryExpense = monthStats.categoryExpense;
     delete monthStats.categoryExpense;
     const filteredCreatorIds = person === 'mine' ? [auth.me._id] : person === 'partner' ? [auth.partner._id] : memberIds;
@@ -159,7 +168,7 @@ exports.main = async (event = {}) => {
       (type === 'all' || group.type === type) &&
       (!category || group.category === category)
     );
-    const filteredStats = buildStats(yearMonth, filteredGroups, filteredCreatorIds, usersById);
+    const filteredStats = buildStats(yearMonth, filteredGroups, filteredCreatorIds, usersById, auth.me._id, auth.partner._id);
     delete filteredStats.categoryExpense;
     const budgetRes = await db.collection('bill_budgets').doc(budgetId(pair.pairKey, yearMonth)).get().catch(() => null);
     const record = budgetRes && budgetRes.data && budgetRes.data.pairKey === pair.pairKey && budgetRes.data.month === yearMonth ? budgetRes.data : null;
