@@ -411,10 +411,12 @@ Page({
     const idx = e.currentTarget.dataset.idx;
     const src = this.data.bannerUrls[idx] || '';
     const fileID = this.data.banners[idx] || '';
-    console.error('[onBannerImgError] 图片加载失败: idx=' + idx,
-      '\n  临时URL:', src.slice(0, 80) + '...',
-      '\n  原始fileID:', fileID.slice(0, 80) + '...',
-      '\n  错误详情:', e.detail);
+    console.error('[onBannerImgError] 图片加载失败', {
+      idx,
+      hasTempURL: !!src,
+      hasFileID: !!fileID,
+      errMsg: e.detail && e.detail.errMsg || ''
+    });
   },
 
   /** 由受控云函数读取真实 Banner 并生成临时 URL。 */
