@@ -463,49 +463,36 @@ function assert(cond, msg) {
   const imageReport = store.reports.find((item) => item._id === imageReportRes.id);
   assert(imageReportRes.success && deepEqual(imageReport.images, ownReportImages.slice(0, 3)),
     '报备图片：本人路径合法，超过3张沿用现有规则只保存前3张');
-  const originalTcbEnv = process.env.TCB_ENV;
-  delete process.env.TCB_ENV;
-  currentContextEnv = undefined;
-  const missingContextEnvReport = await callAs(A, 'createReport', {
-    location: '环境兼容', returnTime: '22:00', reason: '上下文环境缺失', images: [ownReportImages[0]]
+  const envAFileID = `cloud://env-a/report-images/${A}/1.jpg`;
+  const envAReport = await callAs(A, 'createReport', {
+    location: '格式兼容', returnTime: '22:00', reason: '环境A图片', images: [envAFileID]
   });
-  currentContextEnv = 'cloud://test-env/';
-  const formattedContextEnvReport = await callAs(A, 'createReport', {
-    location: '环境兼容', returnTime: '22:00', reason: '上下文环境格式不同', images: [ownReportImages[1]]
+  const envBFileID = `cloud://env-b/report-images/${A}/nested/real-upload.jpg`;
+  const envBReport = await callAs(A, 'createReport', {
+    location: '格式兼容', returnTime: '22:00', reason: '环境B多层路径', images: [envBFileID]
   });
-  const flexibleEnvFileID = `cloud://test-env-2026/report-images/${A}/nested/real-upload.jpg`;
-  const flexibleEnvReport = await callAs(A, 'createReport', {
-    location: '格式兼容', returnTime: '22:00', reason: '多层对象路径', images: [flexibleEnvFileID]
-  });
-  currentContextEnv = 'test-env';
-  process.env.TCB_ENV = 'cloud://test-env/';
-  assert(missingContextEnvReport.success && formattedContextEnvReport.success && flexibleEnvReport.success &&
-    store.reports.find((item) => item._id === flexibleEnvReport.id).images[0] === flexibleEnvFileID,
-    '报备图片格式：context ENV 缺失/格式不同不误拒绝，环境含横杠数字和多层路径可解析');
+  assert(envAReport.success && envBReport.success &&
+    store.reports.find((item) => item._id === envAReport.id).images[0] === envAFileID &&
+    store.reports.find((item) => item._id === envBReport.id).images[0] === envBFileID,
+    '报备图片格式：不同非空环境段与多层路径均可解析，环境字符串不参与授权');
   const ownerAttackC = await callAs(A, 'createReport', {
     location: '攻击测试', returnTime: '22:00', reason: '伪造C图片', images: [`cloud://test-env/report-images/${C}/c.jpg`]
   });
   const ownerAttackD = await callAs(A, 'createReport', {
     location: '攻击测试', returnTime: '22:00', reason: '伪造D图片', images: [`cloud://test-env/report-images/${D}/d.jpg`]
   });
-  const environmentAttack = await callAs(A, 'createReport', {
-    location: '攻击测试', returnTime: '22:00', reason: '跨环境图片', images: [`cloud://other-env/report-images/${A}/x.jpg`]
-  });
-  if (originalTcbEnv === undefined) delete process.env.TCB_ENV;
-  else process.env.TCB_ENV = originalTcbEnv;
   const invalidImage = await callAs(A, 'createReport', {
     location: '攻击测试', returnTime: '22:00', reason: '非法图片', images: ['not-a-cloud-file-id']
   });
   const missingFileEnv = await callAs(A, 'createReport', {
-    location: '攻击测试', returnTime: '22:00', reason: '缺少环境段', images: [`cloud:///report-images/${A}/x.jpg`]
+    location: '攻击测试', returnTime: '22:00', reason: '缺少环境段', images: ['cloud://']
   });
   const missingObjectPath = await callAs(A, 'createReport', {
-    location: '攻击测试', returnTime: '22:00', reason: '缺少对象路径', images: ['cloud://test-env']
+    location: '攻击测试', returnTime: '22:00', reason: '缺少对象路径', images: ['cloud://env/']
   });
   assert([ownerAttackC, ownerAttackD].every((item) => !item.success && item.code === 'FILE_OWNER_MISMATCH') &&
-    !environmentAttack.success && environmentAttack.code === 'FILE_ENV_MISMATCH' &&
     [invalidImage, missingFileEnv, missingObjectPath].every((item) => !item.success && item.code === 'INVALID_FILE_ID'),
-    '报备图片攻击：拒绝C/D路径、跨环境、缺协议、缺环境段和缺对象路径');
+    '报备图片攻击：拒绝C/D路径、缺协议、缺环境段和缺对象路径');
 
   const signedImageDetail = await callAs(B, 'getReportDetail', { reportId: imageReportRes.id });
   assert(signedImageDetail.success && signedImageDetail.report.imageUrls.length === 3 &&
@@ -529,7 +516,7 @@ function assert(cond, msg) {
     historicalImageDetail.report.imageUrls[0].includes(encodeURIComponent(historicalImage)),
     '报备历史图片：不按新上传路径反向校验，已鉴权旧 report 仍可签发URL');
   const newReportNotify = notifyCalls[sendsBeforeReport];
-  assert(notifyCalls.length === sendsBeforeReport + 5, 'subscriptions.count=0：真实报备仍尝试调用微信 API');
+  assert(notifyCalls.length === sendsBeforeReport + 4, 'subscriptions.count=0：真实报备仍尝试调用微信 API');
   assert(newReportNotify.touser === B && newReportNotify.templateId === TEMPLATE_NEW_REPORT &&
     newReportNotify.page === 'pages/message/message', '新报备：接收人、模板和页面由真实伴侣关系固定生成');
   assert(newReportNotify.data.thing2.value === '真实昵称A要去万达影城' &&

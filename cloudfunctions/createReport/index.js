@@ -5,15 +5,6 @@ const cloud = require('wx-server-sdk');
 cloud.init({ env: cloud.DYNAMIC_CURRENT_ENV });
 const db = cloud.database();
 
-function normalizeEnvironmentId(value) {
-  if (typeof value !== 'string') return '';
-  return value.trim().replace(/^cloud:\/\//, '').split('/')[0];
-}
-
-function getSafeFilePathPrefix(filePath) {
-  return filePath.startsWith('report-images/') ? 'report-images/<owner>/' : `${filePath.split('/')[0] || ''}/`;
-}
-
 function parseCloudFileID(fileID) {
   const isString = typeof fileID === 'string';
   const hasCloudPrefix = isString && fileID.startsWith('cloud://');
@@ -21,36 +12,17 @@ function parseCloudFileID(fileID) {
   const slashIndex = rest.indexOf('/');
   const envSegment = slashIndex > 0 ? rest.slice(0, slashIndex) : '';
   const filePath = slashIndex >= 0 ? rest.slice(slashIndex + 1) : '';
-  console.log('[ReportImage][FILE_ID_PARSE]', {
-    prefix: hasCloudPrefix ? 'cloud://' : '',
-    envSegment,
-    pathPrefix: filePath ? getSafeFilePathPrefix(filePath) : '',
-    hasCloudPrefix,
-    rawLength: isString ? fileID.length : 0
-  });
   if (!hasCloudPrefix || slashIndex <= 0 || slashIndex === rest.length - 1) return null;
   return { fileEnv: envSegment, filePath };
 }
 
-function validateReportImages(images, openid, contextEnv) {
-  const runtimeEnv = normalizeEnvironmentId(process.env.TCB_ENV);
-  const normalizedContextEnv = normalizeEnvironmentId(contextEnv);
+function validateReportImages(images, openid) {
   for (const fileID of images) {
     const parsed = parseCloudFileID(fileID);
     if (!parsed) return { success: false, code: 'INVALID_FILE_ID', msg: '图片文件标识不合法' };
-    const { fileEnv, filePath } = parsed;
-    console.log('[ReportImage][ENV_CHECK]', {
-      fileEnv,
-      contextEnv: normalizedContextEnv || '',
-      filePathPrefix: getSafeFilePathPrefix(filePath)
-    });
+    const { filePath } = parsed;
     if (!filePath.startsWith(`report-images/${openid}/`)) {
       return { success: false, code: 'FILE_OWNER_MISMATCH', msg: '只能提交当前用户上传的报备图片' };
-    }
-    // TCB_ENV 是云函数运行环境提供的环境 ID；只有该可靠值存在时才做负向拒绝。
-    // getWXContext().ENV 可能缺失或格式不同，仅可用于正向确认，不能据此误拒绝本人刚上传的文件。
-    if (runtimeEnv && fileEnv !== runtimeEnv) {
-      return { success: false, code: 'FILE_ENV_MISMATCH', msg: '图片不属于当前云环境' };
     }
   }
   return null;
@@ -131,7 +103,6 @@ async function notifyPartner(partnerOpenid, reportData) {
 exports.main = async (event, context) => {
   const wxContext = cloud.getWXContext();
   const OPENID = wxContext.OPENID;
-  const ENV = wxContext.ENV;
   const users = db.collection('users');
   const reports = db.collection('reports');
 
@@ -146,7 +117,7 @@ exports.main = async (event, context) => {
   if (!location) return { success: false, msg: '请填写外出地点' };
   if (!returnTime) return { success: false, msg: '请选择预计归来时间' };
   if (!reason) return { success: false, msg: '请填写事由说明' };
-  const imageError = validateReportImages(images, OPENID, ENV);
+  const imageError = validateReportImages(images, OPENID);
   if (imageError) return imageError;
 
   try {
